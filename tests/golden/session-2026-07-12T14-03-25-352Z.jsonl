@@ -1,0 +1,13 @@
+{"type":"session_start","t":1783865005358,"iso":"2026-07-12T14:03:25.358Z"}
+{"type":"psv","t":1783865006184,"iso":"2026-07-12T14:03:26.184Z","seq":0,"mode_hint":null,"state":{"arousal":{"value":0.5,"confidence":0},"valence":{"value":0.5,"confidence":0},"cognitive_load":{"value":0.5,"confidence":0},"readiness":{"value":0.5,"confidence":0}}}
+{"type":"psv","t":1783865011250,"iso":"2026-07-12T14:03:31.250Z","seq":1,"mode_hint":null,"state":{"arousal":{"value":0.9269825418092872,"confidence":0.5208333333333334},"valence":{"value":0.5,"confidence":0},"cognitive_load":{"value":1,"confidence":0.4736842105263158},"readiness":{"value":0.42978102535150986,"confidence":0.6142857142857144}}}
+{"type":"psv","t":1783865026251,"iso":"2026-07-12T14:03:46.251Z","seq":2,"mode_hint":null,"state":{"arousal":{"value":0.8869986312352508,"confidence":0.5548611111111111},"valence":{"value":0.5,"confidence":0},"cognitive_load":{"value":0.8955223880597014,"confidence":0.5289473684210527},"readiness":{"value":0.42978102535150986,"confidence":0.6142857142857144}}}
+{"type":"psv","t":1783865056252,"iso":"2026-07-12T14:04:16.252Z","seq":3,"mode_hint":null,"state":{"arousal":{"value":0.8235032326993191,"confidence":0.5973958333333333},"valence":{"value":0.5,"confidence":0},"cognitive_load":{"value":0.7920792079207921,"confidence":0.5980263157894737},"readiness":{"value":0.42896914709188616,"confidence":0.6142857142857144}}}
+{"type":"psv","t":1783865086258,"iso":"2026-07-12T14:04:46.258Z","seq":4,"mode_hint":null,"state":{"arousal":{"value":0.7586812914908586,"confidence":0.6484375},"valence":{"value":0.5,"confidence":0},"cognitive_load":{"value":0.6956521739130436,"confidence":0.680921052631579},"readiness":{"value":0.42896914709188616,"confidence":0.6142857142857144}}}
+{"type":"psv","t":1783865116263,"iso":"2026-07-12T14:05:16.263Z","seq":5,"mode_hint":null,"state":{"arousal":{"value":0.7297834900963398,"confidence":0.6994791666666667},"valence":{"value":0.5,"confidence":0},"cognitive_load":{"value":0.6201550387596899,"confidence":0.7638157894736842},"readiness":{"value":0.4281545415269609,"confidence":0.6142857142857144}}}
+{"type":"checkpoint","t":1783865116888,"iso":"2026-07-12T14:05:16.888Z","felt":3}
+{"type":"checkpoint","t":1783865117078,"iso":"2026-07-12T14:05:17.078Z","felt":3}
+{"type":"checkpoint","t":1783865125774,"iso":"2026-07-12T14:05:25.774Z","felt":4}
+{"type":"checkpoint","t":1783865129137,"iso":"2026-07-12T14:05:29.137Z","felt":1}
+{"type":"checkpoint","t":1783865130432,"iso":"2026-07-12T14:05:30.432Z","felt":2}
+{"type":"checkpoint","t":1783865142083,"iso":"2026-07-12T14:05:42.083Z","felt":5}
