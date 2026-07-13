@@ -10,12 +10,15 @@ FetchContent_MakeAvailable(googletest)
 add_executable(prism_unit_tests
   pce/parity_test.cpp
   pce/pce_test.cpp
+  pgae/mapping_test.cpp
+  pgae/render_test.cpp
   psv/json_test.cpp
   psv/psv_test.cpp
   unit/smoke_test.cpp)
 
 target_compile_definitions(prism_unit_tests PRIVATE
-  PRISM_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/tests/golden")
+  PRISM_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/tests/golden"
+  PRISM_ASSETS_DIR="${PROJECT_SOURCE_DIR}/assets")
 # Links all three modules: green tests prove the target graph resolves.
 target_link_libraries(prism_unit_tests PRIVATE
   prism::psv
