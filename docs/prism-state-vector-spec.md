@@ -77,7 +77,7 @@ Confidence is **not** optional and **not** global. A vector can carry a high-con
 |---|---|---|---|
 | `schema_version` | string (semver) | yes | Version of *this* spec the vector conforms to, e.g. `"1.0.0"`. |
 | `vertical` | enum string | yes | Adapter profile that produced the vector: `aqademiq` \| `venues` \| `automotive`. |
-| `update_timestamp` | int64 (epoch ms) | yes | Emission time. Monotonic within a stream. ISO-8601 acceptable in JSON transport. |
+| `update_timestamp` | int64 (epoch ms) | yes | Emission time. Monotonic within a stream. Always epoch milliseconds — no other encoding (the §5.2 schema types it `integer`). |
 | `sequence` | int64 | recommended | Monotonic counter for ordering and dedup. |
 | `mode_hint` | enum string \| null | optional | Discrete summary of state for consumers that want a shortcut (see §9). `null` = no hint; use the continuous vector. |
 
@@ -263,3 +263,4 @@ This spec defines the PCE output as an **abstract, consumer-agnostic representat
 |---|---|---|
 | 1.0.0 | 15 Jun 2026 | Initial draft for engineering + IP review. |
 | 1.0.0 | 16 Jun 2026 | Recorded dimensionality decision (4 dims for v1; expansion deferred, additive per §10). Added companion PGAE consumption spec (`PRISM-SPEC-PGAE-001`). |
+| 1.0.0 | 13 Jul 2026 | §4.3: removed the "ISO-8601 acceptable in JSON transport" allowance for `update_timestamp` — it contradicted the §5.2 schema (`integer`). Epoch ms is the only encoding (owner decision, Ridhwan; schema unchanged). |
