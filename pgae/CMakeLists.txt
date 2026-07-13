@@ -1,5 +1,8 @@
 # pgae — audio engine. Depends on psv only. Must never include or link pce.
 add_library(prism_pgae STATIC
+  src/engine.cpp
+  src/mapping.cpp
+  src/scene.cpp
   src/version.cpp)
 add_library(prism::pgae ALIAS prism_pgae)
 
