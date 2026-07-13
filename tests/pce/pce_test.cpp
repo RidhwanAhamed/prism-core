@@ -143,7 +143,8 @@ TEST(PceEngine, ColdStartEmitsNeutralThenCadenceAndChangeRulesApply) {
   EXPECT_EQ(neutral.sequence, 0);
   EXPECT_DOUBLE_EQ(neutral.arousal.value, 0.5);
 
-  // First evaluate always emits (no previous fused vector).
+  // First evaluate emits via the significant-change rule: the circadian prior pulls
+  // arousal/readiness ≥ significant_delta away from the neutral start vector.
   auto e1 = engine.evaluate(t0 + 5'000);
   ASSERT_TRUE(e1.has_value());
   EXPECT_EQ(e1->sequence, 1);
@@ -173,4 +174,20 @@ TEST(Iso8601, MatchesKnownInstants) {
   EXPECT_EQ(prism::test::parse_iso8601_ms("2026-07-14T18:00:00+04:00"), 1'784'037'600'000);
   EXPECT_FALSE(prism::test::parse_iso8601_ms("2026-07-14").has_value());
   EXPECT_FALSE(prism::test::parse_iso8601_ms("2026-07-14T18:00:00").has_value());
+}
+
+TEST(Iso8601, RangeRulesMatchDateParse) {
+  // Out-of-range month/hour/minute → NaN in JS; must be nullopt here (a fabricated
+  // instant would spuriously fail parity — found by adversarial review).
+  EXPECT_FALSE(prism::test::parse_iso8601_ms("2026-13-01T00:00:00Z").has_value());
+  EXPECT_FALSE(prism::test::parse_iso8601_ms("2026-07-14T25:00:00Z").has_value());
+  EXPECT_FALSE(prism::test::parse_iso8601_ms("2026-07-14T18:75:00Z").has_value());
+  EXPECT_FALSE(prism::test::parse_iso8601_ms("2026-07-14T18:00:75Z").has_value());
+  EXPECT_FALSE(prism::test::parse_iso8601_ms("2026-07-14T24:30:00Z").has_value());
+  // ...but JS ROLLS OVER an overflowing day-of-month, and so does days_from_civil.
+  EXPECT_EQ(prism::test::parse_iso8601_ms("2026-06-31T00:00:00Z"),
+            prism::test::parse_iso8601_ms("2026-07-01T00:00:00Z"));
+  // Hour 24 is exactly-midnight-only.
+  EXPECT_EQ(prism::test::parse_iso8601_ms("2026-07-14T24:00:00Z"),
+            prism::test::parse_iso8601_ms("2026-07-15T00:00:00Z"));
 }

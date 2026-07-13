@@ -49,6 +49,14 @@ inline std::optional<int64_t> parse_iso8601_ms(std::string_view s) {
       !lit(13, ':') || !lit(16, ':')) {
     return std::nullopt;
   }
+  // Range rules mirror JS Date.parse empirically: month/hour/minute/second out of range →
+  // NaN (rejected), but an overflowing day-of-month ROLLS OVER (2026-06-31 → Jul 1), which
+  // days_from_civil below reproduces — so day is deliberately not validated. Hour 24 is
+  // accepted only as exactly 24:00:00.
+  if (*mo < 1 || *mo > 12 || *mi > 59 || *se > 59 || *h > 24 ||
+      (*h == 24 && (*mi != 0 || *se != 0))) {
+    return std::nullopt;
+  }
   size_t pos = 19;
 
   int64_t ms = 0;
@@ -59,6 +67,9 @@ inline std::optional<int64_t> parse_iso8601_ms(std::string_view s) {
     }
     ms = *frac;
     pos += 4;
+  }
+  if (*h == 24 && ms != 0) {
+    return std::nullopt; // 24:00:00.000 only
   }
 
   int64_t offset_min = 0;

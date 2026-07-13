@@ -51,8 +51,11 @@ std::string type_of(const JValue& r) {
 
 int64_t int_field(const JValue& r, const char* name) {
   const JValue* v = r.find(name);
-  EXPECT_TRUE(v && v->type == JValue::Type::Number) << "missing integer field " << name;
-  return v ? v->integer : 0;
+  // number_is_integer is required: an exponent/decimal token leaves JValue::integer at 0,
+  // which would silently replay a wrong instant (found by adversarial review).
+  EXPECT_TRUE(v && v->type == JValue::Type::Number && v->number_is_integer)
+      << "field " << name << " missing or not a plain-integer token";
+  return v && v->number_is_integer ? v->integer : 0;
 }
 
 pce::Priority priority_from(const JValue& task) {
@@ -75,6 +78,7 @@ void expect_matches(const psv::StateVector& emitted, const JValue& record, size_
   const JValue* seq = record.find("seq");
   ASSERT_TRUE(seq != nullptr);
   if (seq->type == JValue::Type::Number) {
+    ASSERT_TRUE(seq->number_is_integer);
     ASSERT_TRUE(emitted.sequence.has_value());
     EXPECT_EQ(*emitted.sequence, seq->integer);
   } else {
@@ -164,7 +168,12 @@ void replay_fixture(const std::filesystem::path& file) {
           const JValue* due = task.find("due");
           ASSERT_TRUE(due && due->type == JValue::Type::String) << file;
           const auto due_ms = prism::test::parse_iso8601_ms(due->string);
-          ASSERT_TRUE(due_ms.has_value()) << file << ": unparseable due " << due->string;
+          if (!due_ms) {
+            // Mirror the probe (deadline-proximity.ts): a task whose due does not parse
+            // is SKIPPED, not an error — a fixture captured against a typo'd tasks.json
+            // must replay the same way in both implementations.
+            continue;
+          }
           deadlines.push_back({*due_ms, priority_from(task)});
         }
         engine.report_task_deadlines(std::move(deadlines));
