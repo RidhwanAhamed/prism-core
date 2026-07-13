@@ -69,6 +69,16 @@ TEST(PsvValidate, CatchesBadMetadata) {
   EXPECT_TRUE(psv::is_valid(v));
 }
 
+TEST(PsvValidate, CatchesNonUtf8ModeHint) {
+  auto v = psv::neutral(psv::Vertical::Aqademiq, 0);
+  v.mode_hint = "\x80\xFF"; // raw invalid bytes: no RFC 8259 representation
+  EXPECT_EQ(psv::validate(v).size(), 1u);
+  v.mode_hint = "\xED\xA0\x80"; // encoded UTF-16 surrogate: also invalid
+  EXPECT_EQ(psv::validate(v).size(), 1u);
+  v.mode_hint = "caf\xC3\xA9"; // well-formed UTF-8 is fine
+  EXPECT_TRUE(psv::is_valid(v));
+}
+
 TEST(PsvValidate, AcceptsBoundaryValues) {
   auto v = psv::neutral(psv::Vertical::Automotive, 0);
   v.arousal = {0.0, 1.0};

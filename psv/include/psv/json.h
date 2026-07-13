@@ -14,9 +14,11 @@ namespace prism::psv {
 
 // Emits the §5.1 reference shape, compact (no whitespace), fields in spec
 // order; `sequence` omitted when absent, `mode_hint` emitted as null when
-// absent. Doubles are printed at round-trip precision (%.17g), so
-// from_json(to_json(v)) == v exactly. Assumes an is_valid() vector: NaN or
-// infinity in a dimension has no JSON representation.
+// absent. Doubles are printed at round-trip precision, so
+// from_json(to_json(v)) == v exactly. Number formatting is locale-independent
+// (the embedding host owns the process locale; wire format must not follow
+// it). Assumes an is_valid() vector: NaN or infinity in a dimension has no
+// JSON representation, and a non-UTF-8 mode_hint has no RFC 8259 encoding.
 std::string to_json(const StateVector& v);
 
 // Parses and validates one PSV document against the §5.2 schema rules:

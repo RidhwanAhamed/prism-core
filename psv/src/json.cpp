@@ -1,11 +1,25 @@
 #include "psv/json.h"
 
+#include "utf8.h"
+
 #include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <utility>
 #include <vector>
+
+// POSIX per-thread locales: JSON's number grammar is locale-independent, but
+// strtod and snprintf follow the process LC_NUMERIC — which the embedding
+// HOST owns, not this library (GTK/Flutter hosts commonly call
+// setlocale(LC_ALL, "")). Every number conversion below runs under a cached
+// "C" locale so wire format never depends on host locale. uselocale is
+// POSIX-2008: present on macOS, glibc, Android (21+), iOS. Windows is not a
+// slice-02 target; it will need _create_locale/_snprintf_l when it arrives.
+#include <locale.h>
+#ifdef __APPLE__
+#include <xlocale.h>
+#endif
 
 namespace prism::psv {
 
@@ -14,6 +28,23 @@ namespace prism::psv {
 // ---------------------------------------------------------------------------
 
 namespace {
+
+locale_t c_locale() {
+  static locale_t loc = newlocale(LC_ALL_MASK, "C", static_cast<locale_t>(nullptr));
+  return loc;
+}
+
+// RAII: switch this thread to the C locale for the enclosed conversions.
+class CLocaleScope {
+public:
+  CLocaleScope() : old_(uselocale(c_locale())) {}
+  ~CLocaleScope() { uselocale(old_); }
+  CLocaleScope(const CLocaleScope&) = delete;
+  CLocaleScope& operator=(const CLocaleScope&) = delete;
+
+private:
+  locale_t old_;
+};
 
 void append_escaped(std::string& out, std::string_view s) {
   out += '"';
@@ -55,6 +86,7 @@ void append_escaped(std::string& out, std::string_view s) {
 
 // %.17g guarantees a double survives text round-trip exactly.
 void append_double(std::string& out, double d) {
+  CLocaleScope c_locale_scope; // '.' decimal point regardless of host locale
   char buf[32];
   std::snprintf(buf, sizeof buf, "%.17g", d);
   out += buf;
@@ -342,6 +374,11 @@ private:
       char c = s_[pos_];
       if (c == '"') {
         ++pos_;
+        // RFC 8259 §8.1: interchange JSON is UTF-8. Escape-decoded sequences
+        // are valid by construction; this catches raw invalid bytes.
+        if (!detail::is_valid_utf8(out)) {
+          return fail("invalid UTF-8 in string");
+        }
         return true;
       }
       if (static_cast<unsigned char>(c) < 0x20) {
@@ -471,9 +508,14 @@ private:
       }
       // fell out of int64 range: keep as double below
     }
-    // strtod parses with the C locale's decimal point; the core never calls
-    // setlocale, so '.' is guaranteed here.
-    out.number = std::strtod(token.c_str(), nullptr);
+    {
+      CLocaleScope c_locale_scope; // host may run a comma-decimal locale
+      char* end = nullptr;
+      out.number = std::strtod(token.c_str(), &end);
+      if (end != token.c_str() + token.size()) {
+        return fail("number token not fully parseable"); // defense in depth
+      }
+    }
     out.number_is_integer = false;
     return true;
   }

@@ -1,5 +1,7 @@
 #include "psv/validate.h"
 
+#include "utf8.h"
+
 #include <cctype>
 
 namespace prism::psv {
@@ -56,6 +58,11 @@ std::vector<std::string> validate(const StateVector& v) {
   }
   if (v.sequence && *v.sequence < 0) {
     errors.push_back("sequence is negative");
+  }
+  // The JSON transport is UTF-8 (RFC 8259 §8.1); a non-UTF-8 hint would make
+  // to_json emit a document strict consumers reject.
+  if (v.mode_hint && !detail::is_valid_utf8(*v.mode_hint)) {
+    errors.push_back("mode_hint is not valid UTF-8");
   }
   check_dimension("arousal", v.arousal, errors);
   check_dimension("valence", v.valence, errors);
