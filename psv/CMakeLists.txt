@@ -1,6 +1,7 @@
 # psv — the contract: PSV types, validation, serialization. Depends on nothing.
 add_library(prism_psv STATIC
   src/json.cpp
+  src/json_value.cpp
   src/psv.cpp
   src/validate.cpp
   src/version.cpp)
