@@ -7,6 +7,7 @@
 // findings — parity with the probe is the bar, do not retune in this slice.
 
 #include "psv/psv.h"
+#include "psv/rt.h"
 
 #include <array>
 #include <cstddef>
@@ -33,6 +34,8 @@ struct AudioParams {
 double brightness_to_hz(double brightness);
 
 AudioParams psv_to_audio_params(const psv::StateVector& v);
+// Same mapping from the real-time snapshot (audio-thread path; allocation-free).
+AudioParams psv_to_audio_params(const psv::RtStateVector& v);
 
 inline double gain_of(const AudioParams& p, StemRole role) {
   return p.gains[static_cast<size_t>(role)];

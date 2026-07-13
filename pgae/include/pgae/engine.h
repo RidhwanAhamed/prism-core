@@ -53,9 +53,11 @@ public:
   bool load_scene(SceneAssets assets, std::string* error = nullptr);
 
   // Consume one PSV (§3 read contract): retarget all smoothed parameters, schedule any
-  // density crossfades at each stem's next loop boundary. Never touches the audio device;
-  // call between render blocks (host thread in this slice).
+  // density crossfades at each stem's next loop boundary.
   AudioParams consume_psv(const psv::StateVector& v);
+  // Real-time overload for the audio thread (Task 4 three-thread model): same semantics,
+  // takes the trivially copyable snapshot from psv::RtExchange. Allocation/lock-free.
+  AudioParams consume_psv(const psv::RtStateVector& v);
 
   // Pull-model render: mono f32. Allocation/lock/log/IO-free.
   void render(float* out, uint32_t frame_count);
@@ -95,6 +97,7 @@ private:
   detail::PeakLimiter limiter_;
 
   double gain_to_amp(double x) const;
+  void apply_params(const AudioParams& params);
   void schedule_crossfade(StemRender& stem, bool activate);
 };
 

@@ -20,12 +20,28 @@ double brightness_to_hz(double brightness) {
   return kCutoffMinHz * std::pow(kCutoffMaxHz / kCutoffMinHz, clamp01(brightness));
 }
 
+namespace {
+AudioParams map_from_effectives(double arousal_eff, double load_eff, double readiness_eff);
+} // namespace
+
 AudioParams psv_to_audio_params(const psv::StateVector& v) {
+  return map_from_effectives(v.arousal.effective(), v.cognitive_load.effective(),
+                             v.readiness.effective());
+}
+
+AudioParams psv_to_audio_params(const psv::RtStateVector& v) {
+  return map_from_effectives(v.effective(psv::kArousal), v.effective(psv::kCognitiveLoad),
+                             v.effective(psv::kReadiness));
+}
+
+namespace {
+
+AudioParams map_from_effectives(double arousal_eff, double load_eff, double readiness_eff) {
   // Confidence-weighted (PGAE §3 / PSV §8.1), centered on the neutral baseline. valence is
   // inert in v1 (PGAE §11).
-  const double a = v.arousal.effective() - 0.5;
-  const double l = v.cognitive_load.effective() - 0.5;
-  const double r = v.readiness.effective() - 0.5;
+  const double a = arousal_eff - 0.5;
+  const double l = load_eff - 0.5;
+  const double r = readiness_eff - 0.5;
 
   // Brightness: arousal opens the filter, load closes it (recede). Neutral (a=l=0) → 0.55.
   const double brightness = clamp01(0.55 + 0.9 * a - 0.8 * l);
@@ -58,5 +74,7 @@ AudioParams psv_to_audio_params(const psv::StateVector& v) {
 
   return p;
 }
+
+} // namespace
 
 } // namespace prism::pgae
