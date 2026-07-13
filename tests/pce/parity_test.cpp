@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "iso8601.h"
-#include "json_value.h" // psv internal parser (tests may reach into psv/src; modules may not)
+#include "psv/detail/json_value.h"
 #include "pce/pce.h"
 #include "psv/psv.h"
 

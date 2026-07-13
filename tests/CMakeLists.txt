@@ -10,16 +10,15 @@ FetchContent_MakeAvailable(googletest)
 add_executable(prism_unit_tests
   pce/parity_test.cpp
   pce/pce_test.cpp
+  pgae/mapping_test.cpp
+  pgae/render_test.cpp
   psv/json_test.cpp
   psv/psv_test.cpp
   unit/smoke_test.cpp)
 
-# The parity test reads golden-trace JSONL via psv's internal JSON value parser. Tests may
-# reach into a module's src/ (the firewall governs the psv/pce/pgae modules, not tests);
-# nothing outside tests/ may do this.
-target_include_directories(prism_unit_tests PRIVATE ${PROJECT_SOURCE_DIR}/psv/src)
 target_compile_definitions(prism_unit_tests PRIVATE
-  PRISM_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/tests/golden")
+  PRISM_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/tests/golden"
+  PRISM_ASSETS_DIR="${PROJECT_SOURCE_DIR}/assets")
 # Links all three modules: green tests prove the target graph resolves.
 target_link_libraries(prism_unit_tests PRIVATE
   prism::psv

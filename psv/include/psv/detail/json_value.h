@@ -1,9 +1,10 @@
 #pragma once
 
-// Internal (psv/src, not public surface): minimal strict JSON value parser, shared by the
-// PSV transport (json.cpp) and by test tooling that reads golden-trace records. Full value
-// grammar so unknown fields of any shape can be skipped (spec §10); no extensions — no
-// comments, no trailing commas, no NaN/Infinity literals. Strings are validated as UTF-8.
+// detail:: — NOT part of the PSV spec surface (no stability promise). Minimal strict JSON
+// value parser shared by the PSV transport, pgae's scenes.json loader, and test tooling
+// that reads golden-trace records. Full value grammar so unknown fields of any shape can
+// be skipped (spec §10); no extensions — no comments, no trailing commas, no NaN/Infinity
+// literals. Strings are validated as UTF-8.
 
 #include <cstdint>
 #include <string>

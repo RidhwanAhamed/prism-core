@@ -1,6 +1,6 @@
 #include "psv/json.h"
 
-#include "json_value.h"
+#include "psv/detail/json_value.h"
 
 #include <cmath>
 #include <cstdio>

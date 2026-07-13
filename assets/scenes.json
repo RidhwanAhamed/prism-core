@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "default_scene": "deep_work",
+  "scenes": [
+    {
+      "id": "deep_work",
+      "key": "C Dorian",
+      "stems": [
+        { "role": "bed", "file": "stems/bed.wav" },
+        { "role": "sub", "file": "stems/sub.wav" },
+        { "role": "pulse", "file": "stems/pulse.wav" },
+        { "role": "lead", "file": "stems/lead.wav" },
+        { "role": "air", "file": "stems/air.wav" }
+      ]
+    }
+  ]
+}
