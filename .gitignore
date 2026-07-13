@@ -1,0 +1,10 @@
+# Build trees (all CMake presets configure into build/<preset>)
+build/
+
+# Tooling caches
+.cache/
+.DS_Store
+
+# Editors
+.vscode/
+.idea/

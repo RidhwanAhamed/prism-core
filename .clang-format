@@ -1,0 +1,13 @@
+# Prism Core formatting. Run: clang-format -i <files> (see CLAUDE.md Commands).
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++17
+ColumnLimit: 100
+IndentWidth: 2
+PointerAlignment: Left
+DerivePointerAlignment: false
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+BreakBeforeBraces: Attach
+IncludeBlocks: Preserve
+SortIncludes: CaseSensitive
