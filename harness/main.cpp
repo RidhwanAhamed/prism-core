@@ -79,18 +79,24 @@ int main(int argc, char** argv) {
 
   std::vector<float> pcm;
   std::vector<float> chunk(static_cast<size_t>(4096) * channels);
+  ma_result decode_result = MA_SUCCESS;
   for (;;) {
     ma_uint64 frames_read = 0;
-    ma_result result = ma_decoder_read_pcm_frames(&decoder, chunk.data(), 4096, &frames_read);
+    decode_result = ma_decoder_read_pcm_frames(&decoder, chunk.data(), 4096, &frames_read);
     if (frames_read > 0) {
       pcm.insert(pcm.end(), chunk.begin(),
                  chunk.begin() + static_cast<size_t>(frames_read) * channels);
     }
-    if (result != MA_SUCCESS || frames_read < 4096) {
+    if (decode_result != MA_SUCCESS || frames_read < 4096) {
       break;
     }
   }
   ma_decoder_uninit(&decoder);
+
+  if (decode_result != MA_SUCCESS && decode_result != MA_AT_END) {
+    std::fprintf(stderr, "warning: decode of %s ended early (%s); looping the partial stem\n",
+                 path.c_str(), ma_result_description(decode_result));
+  }
 
   if (pcm.empty()) {
     std::fprintf(stderr, "error: %s decoded to zero frames\n", path.c_str());
