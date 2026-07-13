@@ -99,6 +99,76 @@ TEST(PgaeRender, NoParameterSteps) {
   EXPECT_LT(max_delta, 1e-3);
 }
 
+TEST(PgaeRender, CrossfadeWaitsForTheExactLoopBoundary) {
+  // Only the air stem exists (DC 1.0, loop 4000). It starts inactive → output is exactly
+  // zero until its equal-power fade-in, which must begin at PRECISELY the next loop
+  // boundary after activation (spec §6.2; real-time rule 5). Added after mutation testing
+  // showed a fade starting immediately passed the whole suite.
+  pgae::SceneAssets assets;
+  assets.sample_rate = kRate;
+  assets.stems[static_cast<size_t>(pgae::StemRole::Air)].assign(4'000, 1.0F);
+  pgae::Pgae engine;
+  ASSERT_TRUE(engine.load_scene(std::move(assets)));
+
+  std::vector<float> out(50'000);
+  engine.render(out.data(), 44'100);                  // silent: air inactive, nothing else present
+  engine.consume_psv(make_psv(1, 1, 0.5, 0, 0.5, 0)); // density 0.95 → air activates
+  engine.render(out.data() + 44'100, static_cast<uint32_t>(out.size()) - 44'100);
+
+  // Boundary after sample 44100 for loop 4000 is 48000. Zero through the boundary sample
+  // (the ramp's t=0 value is sin(0) = 0), first energy strictly after it.
+  for (size_t i = 0; i <= 48'000; ++i) {
+    ASSERT_EQ(out[i], 0.0F) << "energy before the loop boundary at sample " << i;
+  }
+  bool nonzero_after = false;
+  for (size_t i = 48'001; i < 48'100 && !nonzero_after; ++i) {
+    nonzero_after = out[i] != 0.0F;
+  }
+  EXPECT_TRUE(nonzero_after) << "fade never started after the boundary";
+}
+
+namespace {
+
+double rms(const std::vector<float>& x, size_t from, size_t to) {
+  double sum = 0.0;
+  for (size_t i = from; i < to; ++i) {
+    sum += static_cast<double>(x[i]) * static_cast<double>(x[i]);
+  }
+  return std::sqrt(sum / static_cast<double>(to - from));
+}
+
+} // namespace
+
+TEST(PgaeRender, CutoffGlidesInsteadOfStepping) {
+  // DC stems can't see the filter (unity DC gain), so this uses a 2 kHz sine bed — added
+  // after mutation testing showed an instant cutoff step passed the whole suite. A load
+  // slam retargets the cutoff 2400 Hz → ~522 Hz; with TC 0.6s the 2 kHz tone's level must
+  // GLIDE down across seconds, not collapse within 50 ms.
+  pgae::SceneAssets assets;
+  assets.sample_rate = kRate;
+  auto& bed = assets.stems[static_cast<size_t>(pgae::StemRole::Bed)];
+  bed.resize(4'410); // 200 whole cycles → seamless loop
+  for (size_t i = 0; i < bed.size(); ++i) {
+    bed[i] = 0.5F * static_cast<float>(std::sin(2.0 * 3.141592653589793 * 2'000.0 *
+                                                static_cast<double>(i) / kRate));
+  }
+  pgae::Pgae engine;
+  ASSERT_TRUE(engine.load_scene(std::move(assets)));
+
+  render_seconds(engine, 1.0); // settle master fade + filter at the initial 2400 Hz
+  engine.consume_psv(make_psv(0.5, 0, 1, 1, 0.5, 0)); // brightness 0.15 → ~522 Hz target
+  const auto out = render_seconds(engine, 2.0);
+
+  const double early = rms(out, 0, 2'205);      // 0–50 ms after the slam
+  const double mid = rms(out, 24'255, 28'665);  // around 0.6 s (one time constant)
+  const double late = rms(out, 79'380, 88'200); // 1.8–2.0 s (mostly settled)
+  EXPECT_GT(late, 1e-4);                        // still audible, not broken
+  EXPECT_GT(early, 1.1 * mid) << "no glide: attenuation arrived too fast";
+  EXPECT_GT(mid, 1.5 * late) << "no glide: attenuation arrived too fast";
+  // The mutant-killer: an instant cutoff step collapses within 50 ms, making early ≈ late.
+  EXPECT_GT(early, 2.5 * late) << "cutoff stepped instead of gliding";
+}
+
 TEST(PgaeRender, DensityFadeArrivesAndRaisesTheMix) {
   pgae::Pgae engine;
   ASSERT_TRUE(engine.load_scene(dc_assets(0.2F)));

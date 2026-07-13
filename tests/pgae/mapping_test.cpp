@@ -68,6 +68,31 @@ TEST(PgaeMapping, HighLoadRecedesToTheCore) {
   EXPECT_DOUBLE_EQ(p.cutoff_hz, pgae::brightness_to_hz(0.15));
 }
 
+TEST(PgaeMapping, DensityGateActivatesLayersInSalienceOrder) {
+  // Positive activation coverage (added after mutation testing showed a suite that never
+  // turns air/lead ON passes green with the thresholds typo'd out of reach).
+  // Full-confidence arousal only: density = 0.5 + 0.9·(a_val − 0.5).
+  const auto at_density = [](double density) {
+    return pgae::psv_to_audio_params(make_psv(0.5 + (density - 0.5) / 0.9, 1, 0.5, 0, 0.5, 0));
+  };
+  // density ≈ 0.40: pulse only.
+  auto p = at_density(0.40);
+  EXPECT_TRUE(active_of(p, pgae::StemRole::Pulse));
+  EXPECT_FALSE(active_of(p, pgae::StemRole::Air));
+  EXPECT_FALSE(active_of(p, pgae::StemRole::Lead));
+  // density ≈ 0.56: air joins, lead still out.
+  p = at_density(0.56);
+  EXPECT_TRUE(active_of(p, pgae::StemRole::Air));
+  EXPECT_FALSE(active_of(p, pgae::StemRole::Lead));
+  // density ≈ 0.73 and the saturated case: all five audible.
+  for (const auto& params :
+       {at_density(0.73), pgae::psv_to_audio_params(make_psv(1, 1, 0.5, 0, 0.5, 0))}) {
+    for (size_t i = 0; i < pgae::kStemRoleCount; ++i) {
+      EXPECT_TRUE(params.active[i]) << pgae::kStemRoleNames[i];
+    }
+  }
+}
+
 TEST(PgaeMapping, FatigueRaisesTheGroundingSub) {
   // readiness 0 at full confidence: r = −0.5 → sub = 0.5 + 0.3 = 0.8 (support the fatigued).
   const auto p = pgae::psv_to_audio_params(make_psv(0.5, 0, 0.5, 0, 0.0, 1));
