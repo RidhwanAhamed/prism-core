@@ -1,6 +1,6 @@
 // Desktop harness.
 //
-// Two modes:
+// Three modes:
 //   prism_harness [stem.wav] [--seconds N]
 //     Task 0 smoke: preload one stem, loop it sample-accurately through a playback device.
 //   prism_harness --scene assets/scenes.json [--fixture tests/golden/fixture-*.jsonl] [--seconds N]
@@ -8,23 +8,35 @@
 //     parity check against the probe. Default schedule is a scripted sweep
 //     (neutral → focus → overload → recovery); --fixture replays a golden trace's PSV
 //     trajectory at its real cadence instead.
+//   prism_harness --scene assets/scenes.json --rt [--seconds N]
+//     Task 4: the three-thread model, live — a scripted ingress thread feeds raw events
+//     to the PCE, the inference thread evaluates on the 5s cadence and publishes PSVs
+//     into the atomic double-buffer exchange, and the audio thread polls the exchange and
+//     renders. The only thing crossing to audio is the RtStateVector snapshot.
 //
-// Real-time rules hold even here: the audio callback only consumes pre-allocated state —
-// no allocation, no locks, no logging, no I/O. PSV applications happen ON the audio
-// thread from a pre-built schedule (Task 4 brings the cross-thread double buffer).
+// Real-time rules hold everywhere: audio callbacks only consume pre-allocated state — no
+// allocation, no locks, no logging, no I/O. The ingress↔inference seam MAY use a mutex
+// (the rules constrain the audio path only).
 
 #include "miniaudio.h"
 
+#include "pce/pce.h"
 #include "pgae/engine.h"
 #include "pgae/scene.h"
 #include "psv/detail/json_value.h"
+#include "psv/exchange.h"
 #include "psv/psv.h"
+#include "psv/rt.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fstream>
+#include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -257,12 +269,13 @@ std::string dir_of(const std::string& path) {
   return slash == std::string::npos ? std::string(".") : path.substr(0, slash);
 }
 
-int run_scene_mode(const std::string& manifest_path, const std::string& fixture_path,
-                   long run_seconds) {
+// Parse the manifest, decode the default scene's stems, load the engine.
+bool load_engine(const std::string& manifest_path, prism::pgae::Pgae& engine,
+                 ma_uint32* sample_rate, std::string* scene_id) {
   std::ifstream in(manifest_path);
   if (!in.good()) {
     std::fprintf(stderr, "error: cannot open %s\n", manifest_path.c_str());
-    return 1;
+    return false;
   }
   std::stringstream buffer;
   buffer << in.rdbuf();
@@ -271,34 +284,45 @@ int run_scene_mode(const std::string& manifest_path, const std::string& fixture_
   const auto manifest = prism::pgae::parse_scene_manifest(buffer.str(), &error);
   if (!manifest) {
     std::fprintf(stderr, "error: bad manifest: %s\n", error.c_str());
-    return 1;
+    return false;
   }
   auto assets = prism::pgae::load_scene_assets(*manifest, manifest->default_scene,
                                                dir_of(manifest_path), &error);
   if (!assets) {
     std::fprintf(stderr, "error: %s\n", error.c_str());
-    return 1;
+    return false;
   }
-  const ma_uint32 sample_rate = assets->sample_rate;
-
-  prism::pgae::Pgae engine;
+  *sample_rate = assets->sample_rate;
+  *scene_id = manifest->default_scene;
   if (!engine.load_scene(std::move(*assets), &error)) {
     std::fprintf(stderr, "error: %s\n", error.c_str());
+    return false;
+  }
+  return true;
+}
+
+int run_scene_mode(const std::string& manifest_path, const std::string& fixture_path,
+                   long run_seconds) {
+  prism::pgae::Pgae engine;
+  ma_uint32 sample_rate = 0;
+  std::string scene_id;
+  if (!load_engine(manifest_path, engine, &sample_rate, &scene_id)) {
     return 1;
   }
 
   std::vector<ScheduledPsv> schedule;
+  std::string error;
   if (!fixture_path.empty()) {
     schedule = build_fixture_schedule(fixture_path, sample_rate, &error);
     if (schedule.empty()) {
       std::fprintf(stderr, "error: %s\n", error.c_str());
       return 1;
     }
-    std::printf("scene %s | driving from %s (%zu PSVs at real cadence)\n",
-                manifest->default_scene.c_str(), fixture_path.c_str(), schedule.size());
+    std::printf("scene %s | driving from %s (%zu PSVs at real cadence)\n", scene_id.c_str(),
+                fixture_path.c_str(), schedule.size());
   } else {
     schedule = build_sweep_schedule(sample_rate);
-    std::printf("scene %s | scripted sweep:\n", manifest->default_scene.c_str());
+    std::printf("scene %s | scripted sweep:\n", scene_id.c_str());
     for (const auto& item : schedule) {
       std::printf("  %5.1fs  %s\n", static_cast<double>(item.at_sample) / sample_rate, item.label);
     }
@@ -339,12 +363,173 @@ int run_scene_mode(const std::string& manifest_path, const std::string& fixture_
   return 0;
 }
 
+// ---------------------------------------------------------------------------------------
+// Task 4 mode: the live three-thread pipeline (ingress / inference / audio).
+// ---------------------------------------------------------------------------------------
+
+int64_t now_ms() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
+
+// JS Date#getTimezoneOffset convention (UTC − local, minutes) — circadian is local-hours.
+int local_tz_offset_min() {
+  const std::time_t now = std::time(nullptr);
+  std::tm local{};
+  localtime_r(&now, &local);
+  return static_cast<int>(-local.tm_gmtoff / 60);
+}
+
+// Sleep in short slices so shutdown stays responsive.
+void sleep_or_stop(double seconds, const std::atomic<bool>& stop) {
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(static_cast<int64_t>(seconds * 1000));
+  while (!stop.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+}
+
+struct RtAudioState {
+  prism::pgae::Pgae* engine = nullptr;
+  prism::psv::RtExchange* exchange = nullptr;
+};
+
+// Real-time path: one wait-free poll, then render. Nothing else.
+void rt_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
+  auto* s = static_cast<RtAudioState*>(device->pUserData);
+  prism::psv::RtStateVector v;
+  if (s->exchange->poll(v)) {
+    s->engine->consume_psv(v);
+  }
+  s->engine->render(static_cast<float*>(output), frame_count);
+  (void)input;
+}
+
+int run_rt_mode(const std::string& manifest_path, long run_seconds) {
+  prism::pgae::Pgae engine;
+  ma_uint32 sample_rate = 0;
+  std::string scene_id;
+  if (!load_engine(manifest_path, engine, &sample_rate, &scene_id)) {
+    return 1;
+  }
+
+  prism::psv::RtExchange exchange;
+  std::mutex pce_mutex; // ingress and inference threads share the PCE; audio never does
+  prism::pce::PceOptions options;
+  options.tz_offset_min = local_tz_offset_min();
+  prism::pce::Pce pce(options);
+  std::atomic<bool> stop{false};
+
+  {
+    std::lock_guard<std::mutex> lock(pce_mutex);
+    const int64_t t = now_ms();
+    // One synthetic deadline tomorrow so deadline pressure participates.
+    pce.report_task_deadlines({{t + 24 * 3'600'000, prism::pce::Priority::High}});
+    exchange.publish(prism::psv::to_rt(pce.start(t)));
+  }
+
+  // Ingress thread: scripted behavior in 90s cycles — focused, scattered, away — standing
+  // in for the platform shell's capture layer. Bare timestamps and durations only.
+  std::thread ingress([&] {
+    int tick = 0;
+    while (!stop.load(std::memory_order_acquire)) {
+      sleep_or_stop(5.0, stop);
+      if (stop.load(std::memory_order_acquire)) {
+        break;
+      }
+      const int64_t t = now_ms();
+      const int phase_s = (tick * 5) % 90;
+      ++tick;
+      std::lock_guard<std::mutex> lock(pce_mutex);
+      if (phase_s < 30) {
+        pce.report_idle(t, (tick % 3) * 700); // focused: sub-threshold idle noise
+      } else if (phase_s < 60) {
+        pce.report_idle(t, 500);
+        pce.report_app_switch(t); // scattered: a switch every capture tick
+      } else {
+        pce.report_idle(t, 20'000 + (phase_s - 60) * 1'000); // away: idle climbing
+      }
+    }
+  });
+
+  // Inference thread: the PCE cadence loop. Only PSVs cross to audio, via the exchange.
+  std::thread inference([&] {
+    while (!stop.load(std::memory_order_acquire)) {
+      sleep_or_stop(5.0, stop);
+      if (stop.load(std::memory_order_acquire)) {
+        break;
+      }
+      std::optional<prism::psv::StateVector> emitted;
+      {
+        std::lock_guard<std::mutex> lock(pce_mutex);
+        emitted = pce.evaluate(now_ms());
+      }
+      if (emitted) {
+        exchange.publish(prism::psv::to_rt(*emitted));
+        const auto& s = *emitted;
+        std::printf("[psv] seq=%lld arousal=%.2f@%.2f load=%.2f@%.2f readiness=%.2f@%.2f\n",
+                    static_cast<long long>(s.sequence.value_or(0)), s.arousal.value,
+                    s.arousal.confidence, s.cognitive_load.value, s.cognitive_load.confidence,
+                    s.readiness.value, s.readiness.confidence);
+      }
+    }
+  });
+
+  RtAudioState state;
+  state.engine = &engine;
+  state.exchange = &exchange;
+
+  ma_device_config device_config = ma_device_config_init(ma_device_type_playback);
+  device_config.playback.format = ma_format_f32;
+  device_config.playback.channels = 1;
+  device_config.sampleRate = sample_rate;
+  device_config.dataCallback = rt_callback;
+  device_config.pUserData = &state;
+
+  ma_device device;
+  if (ma_device_init(nullptr, &device_config, &device) != MA_SUCCESS) {
+    std::fprintf(stderr, "error: failed to open playback device\n");
+    stop.store(true, std::memory_order_release);
+    ingress.join();
+    inference.join();
+    return 1;
+  }
+  if (ma_device_start(&device) != MA_SUCCESS) {
+    std::fprintf(stderr, "error: failed to start playback device\n");
+    ma_device_uninit(&device);
+    stop.store(true, std::memory_order_release);
+    ingress.join();
+    inference.join();
+    return 1;
+  }
+
+  std::printf("scene %s | live three-thread pipeline (ingress / inference / audio)\n"
+              "behavior cycles every 90s: focused → scattered → away\n",
+              scene_id.c_str());
+
+  if (run_seconds > 0) {
+    std::printf("running for %ld second(s)...\n", run_seconds);
+    std::this_thread::sleep_for(std::chrono::seconds(run_seconds));
+  } else {
+    std::printf("press Enter to stop.\n");
+    std::getchar();
+  }
+
+  stop.store(true, std::memory_order_release);
+  ingress.join();
+  inference.join();
+  ma_device_uninit(&device);
+  return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
   std::string stem_path = "assets/stems/bed.wav";
   std::string scene_path;
   std::string fixture_path;
+  bool rt_mode = false;
   long run_seconds = 0; // 0 = until Enter
 
   for (int i = 1; i < argc; ++i) {
@@ -354,11 +539,20 @@ int main(int argc, char** argv) {
       scene_path = argv[++i];
     } else if (std::strcmp(argv[i], "--fixture") == 0 && i + 1 < argc) {
       fixture_path = argv[++i];
+    } else if (std::strcmp(argv[i], "--rt") == 0) {
+      rt_mode = true;
     } else {
       stem_path = argv[i];
     }
   }
 
+  if (rt_mode) {
+    if (scene_path.empty()) {
+      std::fprintf(stderr, "error: --rt requires --scene <scenes.json>\n");
+      return 1;
+    }
+    return run_rt_mode(scene_path, run_seconds);
+  }
   if (!scene_path.empty()) {
     return run_scene_mode(scene_path, fixture_path, run_seconds);
   }
