@@ -19,9 +19,16 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
+      - name: Generate comma-decimal locale (Linux, locale-independence tests)
+        if: runner.os == 'Linux'
+        run: sudo locale-gen de_DE.UTF-8
+
       - name: Install ninja (macOS)
         if: runner.os == 'macOS'
         run: brew install ninja
+
+      - name: Install jsonschema (PSV schema conformance test)
+        run: python3 -m pip install --user jsonschema || python3 -m pip install --user --break-system-packages jsonschema
 
       - name: Configure
         run: cmake --preset debug
