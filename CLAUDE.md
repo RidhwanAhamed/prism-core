@@ -122,8 +122,9 @@ battery estimate) measured and recorded against the budgets in the build plan.
 
 ## Commands
 
-<!-- Fill in during Task 0. -->
-- Configure/build: `TBD (cmake presets)`
-- Test: `TBD (ctest)`
-- Harness: `TBD`
-- Lint/format: `TBD (clang-format)`
+- Configure: `cmake --preset debug` (also `release`, `asan`)
+- Build: `cmake --build --preset debug`
+- Test: `ctest --preset debug` (includes the `firewall_includes` check)
+- Harness: `./build/debug/harness/prism_harness assets/stems/bed.wav` from the repo
+  root (`--seconds N` to auto-exit; omit to play until Enter)
+- Format: `find psv pce pgae harness tests/unit -name "*.cpp" -o -name "*.h" | xargs clang-format -i`
