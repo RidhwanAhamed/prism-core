@@ -129,4 +129,6 @@ battery estimate) measured and recorded against the budgets in the build plan.
   (`--scene <scenes.json>`, `--seconds N` to auto-exit; omit to play until Enter) —
   runs the full live pipeline through `include/prism/prism_core.h`
 - PCE tick benchmark: `./build/debug/tools/pce_bench`
+- Bindings host test: `PRISM_CORE_LIB=$PWD/build/debug/core/libprism_core.dylib PRISM_SCENES=$PWD/assets/scenes.json dart test` (from `bindings/dart/prism_core_bindings`)
+- Android smoke app: `flutter build apk --release` (from `examples/flutter_smoke`; setup notes in its README)
 - Format: `find psv pce pgae harness tests/unit -name "*.cpp" -o -name "*.h" | xargs clang-format -i`

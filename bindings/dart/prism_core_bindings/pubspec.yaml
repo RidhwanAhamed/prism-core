@@ -1,0 +1,14 @@
+name: prism_core_bindings
+description: dart:ffi bindings for the Prism Engine core C ABI (include/prism/prism_core.h).
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.4.0
+
+dependencies:
+  ffi: ^2.1.0
+
+dev_dependencies:
+  ffigen: ^19.0.0
+  test: ^1.25.0

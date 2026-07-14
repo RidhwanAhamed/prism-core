@@ -6,7 +6,11 @@ target_include_directories(miniaudio SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/m
 find_package(Threads REQUIRED)
 target_link_libraries(miniaudio PUBLIC Threads::Threads)
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(ANDROID)
+  # miniaudio runtime-links AAudio/OpenSL|ES; dl, m, and the NDK log lib suffice at link
+  # time (build plan targets AAudio — minSdk 26+).
+  target_link_libraries(miniaudio PUBLIC ${CMAKE_DL_LIBS} m log)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   # miniaudio dlopens ALSA/PulseAudio at runtime; only dl and m are needed at link time.
   target_link_libraries(miniaudio PUBLIC ${CMAKE_DL_LIBS} m)
 elseif(APPLE)

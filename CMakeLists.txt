@@ -10,6 +10,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# The C ABI is the only public surface: hide every symbol by default (PRISM_API opts the
+# 16 ABI functions back in), and build PIC everywhere so the static modules can fold into
+# the shared library Android/FFI hosts load.
+set(CMAKE_C_VISIBILITY_PRESET hidden)
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # ABI hygiene: symbols are hidden by default so a shared prism_core exports ONLY the
 # PRISM_API-annotated surface — not miniaudio or internal module symbols (review finding:
 # an unconstrained shared build exported 1348 symbols instead of 16).

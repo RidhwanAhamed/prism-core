@@ -1,0 +1,4 @@
+analyzer:
+  errors:
+    # The ffigen output includes transitively-seen platform macros we don't reference.
+    unused_element: ignore
