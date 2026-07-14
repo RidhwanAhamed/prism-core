@@ -59,7 +59,17 @@ bool Pgae::load_scene(SceneAssets assets, std::string* error) {
 
 AudioParams Pgae::consume_psv(const psv::StateVector& v) {
   const AudioParams params = psv_to_audio_params(v);
+  apply_params(params);
+  return params;
+}
 
+AudioParams Pgae::consume_psv(const psv::RtStateVector& v) {
+  const AudioParams params = psv_to_audio_params(v);
+  apply_params(params);
+  return params;
+}
+
+void Pgae::apply_params(const AudioParams& params) {
   cutoff_target_ = params.cutoff_hz;
   for (size_t i = 0; i < kStemRoleCount; ++i) {
     StemRender& stem = stems_[i];
@@ -72,7 +82,6 @@ AudioParams Pgae::consume_psv(const psv::StateVector& v) {
       schedule_crossfade(stem, params.active[i]);
     }
   }
-  return params;
 }
 
 void Pgae::schedule_crossfade(StemRender& stem, bool activate) {

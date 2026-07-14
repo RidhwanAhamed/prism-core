@@ -12,6 +12,8 @@ add_executable(prism_unit_tests
   pce/pce_test.cpp
   pgae/mapping_test.cpp
   pgae/render_test.cpp
+  pgae/rt_safety_test.cpp
+  psv/exchange_test.cpp
   psv/json_test.cpp
   psv/psv_test.cpp
   unit/smoke_test.cpp)
@@ -34,6 +36,14 @@ gtest_discover_tests(prism_unit_tests)
 add_test(NAME firewall_includes
   COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR}
           -P ${PROJECT_SOURCE_DIR}/cmake/CheckFirewall.cmake)
+
+# Static half of the real-time rules: the compiler-computed include closure of the
+# render path must not name locking/blocking/logging/C-allocator primitives (the
+# dynamic half is PgaeRtSafety's instrumented run, which covers operator new/delete).
+add_test(NAME rt_lock_primitives
+  COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR}
+          -DCXX=${CMAKE_CXX_COMPILER}
+          -P ${PROJECT_SOURCE_DIR}/cmake/CheckRtPrimitives.cmake)
 
 # Independent schema conformance: emitted PSVs validated against the spec's
 # own JSON Schema by python-jsonschema. Registered only where python3 with

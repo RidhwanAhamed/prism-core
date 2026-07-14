@@ -3,6 +3,7 @@ add_library(prism_psv STATIC
   src/json.cpp
   src/json_value.cpp
   src/psv.cpp
+  src/rt.cpp
   src/validate.cpp
   src/version.cpp)
 add_library(prism::psv ALIAS prism_psv)

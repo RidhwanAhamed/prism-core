@@ -3,6 +3,7 @@
 add_executable(prism_harness
   main.cpp)
 target_link_libraries(prism_harness PRIVATE
+  prism::pce
   prism::pgae
   prism::psv
   miniaudio)
