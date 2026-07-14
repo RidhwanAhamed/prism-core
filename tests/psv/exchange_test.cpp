@@ -28,9 +28,20 @@ psv::RtStateVector snapshot_for(int64_t seq) {
   return v;
 }
 
+// Field-wise, deliberately NOT memcmp: struct padding bytes are indeterminate and differ
+// across platforms/stacks (memcmp here produced false "torn" reports on Linux CI). Every
+// meaningful field is derived from the sequence number, so a genuine tear — any mix of
+// two snapshots — still fails this check.
 bool coherent(const psv::RtStateVector& v) {
   const psv::RtStateVector expected = snapshot_for(v.sequence);
-  return std::memcmp(&expected, &v, sizeof v) == 0;
+  for (int d = 0; d < psv::kDimensionCount; ++d) {
+    if (v.value[d] != expected.value[d] || v.confidence[d] != expected.confidence[d]) {
+      return false;
+    }
+  }
+  return v.update_timestamp_ms == expected.update_timestamp_ms &&
+         v.sequence == expected.sequence && v.vertical == expected.vertical &&
+         std::strcmp(v.mode_hint, expected.mode_hint) == 0;
 }
 
 } // namespace
