@@ -17,6 +17,14 @@ elseif(APPLE)
   target_link_libraries(miniaudio PUBLIC
     "-framework CoreFoundation"
     "-framework CoreAudio"
-    "-framework AudioUnit"
     "-framework AudioToolbox")
+  if(IOS)
+    # miniaudio touches AVAudioSession on iOS, which needs the Objective-C runtime:
+    # compile the implementation TU as Objective-C and link AVFoundation.
+    set_source_files_properties(miniaudio/miniaudio.c PROPERTIES
+      COMPILE_OPTIONS "-x;objective-c")
+    target_link_libraries(miniaudio PUBLIC "-framework AVFoundation" "-framework Foundation")
+  else()
+    target_link_libraries(miniaudio PUBLIC "-framework AudioUnit")
+  endif()
 endif()

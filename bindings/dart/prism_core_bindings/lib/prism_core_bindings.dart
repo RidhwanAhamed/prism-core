@@ -110,7 +110,15 @@ class PrismCore {
       return ffi.DynamicLibrary.open(override);
     }
     if (Platform.isAndroid) return ffi.DynamicLibrary.open('libprism_core.so');
-    if (Platform.isIOS) return ffi.DynamicLibrary.process();
+    if (Platform.isIOS) {
+      // The core ships as an embedded dynamic framework (Task 7); dyld resolves the
+      // rpath name. process() covers a statically linked future variant.
+      try {
+        return ffi.DynamicLibrary.open('prism_core.framework/prism_core');
+      } on ArgumentError {
+        return ffi.DynamicLibrary.process();
+      }
+    }
     if (Platform.isMacOS) return ffi.DynamicLibrary.open('libprism_core.dylib');
     throw UnsupportedError('no prism_core library location for this platform');
   }

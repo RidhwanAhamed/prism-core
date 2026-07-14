@@ -30,6 +30,10 @@ flutter_ios_podfile_setup
 target 'Runner' do
   use_frameworks!
 
+  # The Prism Engine core, vendored as an xcframework built by
+  # ../../tools/build_ios_framework.sh (run it before pod install).
+  pod 'prism_core', :path => '../../../core/ios'
+
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
     inherit! :search_paths

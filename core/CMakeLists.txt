@@ -30,5 +30,15 @@ if(PRISM_BUILD_SHARED)
     prism::psv
     miniaudio)
   set_target_properties(prism_core_shared PROPERTIES OUTPUT_NAME prism_core)
+  if(IOS)
+    # Ship as a dynamic framework: embedded frameworks are signed by the app build, and
+    # dart:ffi opens 'prism_core.framework/prism_core' by rpath.
+    set_target_properties(prism_core_shared PROPERTIES
+      FRAMEWORK TRUE
+      FRAMEWORK_VERSION A
+      MACOSX_FRAMEWORK_IDENTIFIER com.prism.core
+      MACOSX_FRAMEWORK_BUNDLE_VERSION 0.1.0
+      MACOSX_FRAMEWORK_SHORT_VERSION_STRING 0.1.0)
+  endif()
   prism_set_warnings(prism_core_shared)
 endif()
