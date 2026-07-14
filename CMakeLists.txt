@@ -31,6 +31,8 @@ add_subdirectory(third_party)
 add_subdirectory(psv)
 add_subdirectory(pce)
 add_subdirectory(pgae)
+add_subdirectory(core)
+add_subdirectory(tools)
 
 if(PRISM_BUILD_HARNESS)
   add_subdirectory(harness)

@@ -15,13 +15,14 @@ if(NOT DEFINED ROOT OR NOT DEFINED CXX)
   message(FATAL_ERROR "Pass -DROOT=<repo root> -DCXX=<c++ compiler>")
 endif()
 
-set(flags -std=c++17 "-I${ROOT}/pgae/include" "-I${ROOT}/psv/include")
+set(flags -std=c++17 "-I${ROOT}/pgae/include" "-I${ROOT}/psv/include" "-I${ROOT}/include")
 
 # Render-path TUs; exchange.h is polled by the audio thread but not included by pgae TUs,
 # so its closure is computed separately (as a standalone C++ header).
 set(closure_output "")
 execute_process(
   COMMAND ${CXX} ${flags} -MM "${ROOT}/pgae/src/engine.cpp" "${ROOT}/pgae/src/mapping.cpp"
+          "${ROOT}/core/src/render.cpp"
   OUTPUT_VARIABLE tu_deps
   ERROR_VARIABLE tu_err
   RESULT_VARIABLE tu_rc)
@@ -53,7 +54,8 @@ foreach(item IN LISTS dep_items)
     list(APPEND audited "${item}")
   endif()
 endforeach()
-list(APPEND audited "${ROOT}/pgae/src/engine.cpp" "${ROOT}/pgae/src/mapping.cpp")
+list(APPEND audited "${ROOT}/pgae/src/engine.cpp" "${ROOT}/pgae/src/mapping.cpp"
+  "${ROOT}/core/src/render.cpp")
 list(REMOVE_DUPLICATES audited)
 list(LENGTH audited audited_count)
 if(audited_count LESS 8)
