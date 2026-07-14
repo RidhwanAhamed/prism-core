@@ -47,7 +47,11 @@ add_subdirectory(psv)
 add_subdirectory(pce)
 add_subdirectory(pgae)
 add_subdirectory(core)
-add_subdirectory(tools)
+
+option(PRISM_BUILD_TOOLS "Build developer tools (host only)" ON)
+if(PRISM_BUILD_TOOLS)
+  add_subdirectory(tools)
+endif()
 
 if(PRISM_BUILD_HARNESS)
   add_subdirectory(harness)

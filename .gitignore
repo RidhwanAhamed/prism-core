@@ -11,3 +11,4 @@ build/
 
 # Workflow-agent worktrees (session tooling, never repo content)
 .claude/
+core/ios/prism_core.xcframework/
