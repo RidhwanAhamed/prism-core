@@ -105,6 +105,42 @@ TEST(PrismAbi, ColdStartThenIngressDrivesEmissions) {
   prism_destroy(core);
 }
 
+TEST(PrismAbi, RestartContinuesTheSequence) {
+  // stop→start is legal; the restart's neutral vector must CONTINUE the sequence, not
+  // reuse the previous run's last number with different content (adversarial review:
+  // sequence-deduping consumers silently missed the snap back to neutral).
+  prism_config config = prism_config_default();
+  config.check_interval_ms = 25;
+  config.cadence_ms = 100;
+
+  prism_core* core = nullptr;
+  ASSERT_EQ(prism_create(&config, &core), PRISM_OK);
+  ASSERT_EQ(prism_load_scene(core, scenes_path()), PRISM_OK);
+  ASSERT_EQ(prism_start(core), PRISM_OK);
+
+  const prism_task_deadline deadline = {now_ms() + 3'600'000, 2};
+  ASSERT_EQ(prism_report_task_deadlines(core, &deadline, 1), PRISM_OK);
+  ASSERT_TRUE(wait_for_psv(core, [](const prism_psv& p) { return p.sequence >= 1; }, 3'000));
+
+  prism_psv before_stop;
+  ASSERT_EQ(prism_get_psv(core, &before_stop), PRISM_OK);
+  ASSERT_EQ(prism_stop(core), PRISM_OK);
+
+  ASSERT_EQ(prism_start(core), PRISM_OK);
+  prism_psv after_restart;
+  ASSERT_EQ(prism_get_psv(core, &after_restart), PRISM_OK);
+  EXPECT_GT(after_restart.sequence, before_stop.sequence) << "restart reused a sequence number";
+  EXPECT_DOUBLE_EQ(after_restart.arousal, 0.5); // neutral again
+  EXPECT_DOUBLE_EQ(after_restart.arousal_confidence, 0.0);
+
+  // Emissions after the restart keep the sequence strictly monotonic.
+  const int64_t restart_seq = after_restart.sequence;
+  EXPECT_TRUE(wait_for_psv(
+      core, [restart_seq](const prism_psv& p) { return p.sequence > restart_seq; }, 3'000));
+
+  prism_destroy(core);
+}
+
 TEST(PrismAbi, PullModelRenderProducesBoundedAudio) {
   prism_config config = prism_config_default();
   config.check_interval_ms = 25;

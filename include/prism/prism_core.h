@@ -111,9 +111,10 @@ PRISM_API void prism_destroy(prism_core* core);
  * time. Call once, before prism_start / any rendering. INVALID_STATE after start. */
 PRISM_API prism_result prism_load_scene(prism_core* core, const char* scenes_json_path);
 
-/* Start the engine: emits the cold-start neutral PSV (spec §6) and launches the internal
- * inference thread (evaluates on the cadence + significant-change rule). Requires a
- * loaded scene. INVALID_STATE if already started. */
+/* Start the engine: emits the neutral PSV (spec §6) and launches the internal inference
+ * thread (evaluates on the cadence + significant-change rule). Requires a loaded scene.
+ * INVALID_STATE if already started. Restart after prism_stop is allowed; the restart's
+ * neutral vector continues the sequence (see prism_psv.sequence). */
 PRISM_API prism_result prism_start(prism_core* core);
 
 /* Stop the inference thread (and the built-in device if running). Idempotent. */
@@ -135,7 +136,10 @@ typedef struct prism_task_deadline {
 } prism_task_deadline;
 
 /* Replace the full task-deadline snapshot (matches how hosts observe task lists).
- * `tasks` may be NULL when `count` is 0 (an empty list is a valid state). */
+ * `tasks` may be NULL when `count` is 0 (an empty list is a valid state). Task lists are
+ * human-scale: count > 4096 is rejected as INVALID_ARGUMENT (this also shields the
+ * boundary from negative lengths cast to size_t). No C++ exception ever crosses this
+ * ABI; internal failures surface as error codes. */
 PRISM_API prism_result prism_report_task_deadlines(prism_core* core,
                                                    const prism_task_deadline* tasks, size_t count);
 
@@ -148,7 +152,9 @@ typedef struct prism_psv {
   double cognitive_load, cognitive_load_confidence;
   double readiness, readiness_confidence;
   int64_t update_timestamp_ms;
-  int64_t sequence;   /* monotonic; the cold-start vector is 0 */
+  /* Strictly monotonic across the handle's lifetime: the first start's cold-start vector
+   * is 0; a restart's neutral vector CONTINUES the sequence (safe to dedup by it). */
+  int64_t sequence;
   char mode_hint[24]; /* NUL-terminated; empty string = null hint (spec §9) */
 } prism_psv;
 

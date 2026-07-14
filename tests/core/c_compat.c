@@ -39,11 +39,18 @@ int main(void) {
       return 8;
     }
   }
+  /* A negative length cast to size_t must come back as an error code — never as a C++
+   * exception aborting a C host (adversarial review reproduced the SIGABRT). */
+  prism_task_deadline one = {0, 1};
+  if (prism_report_task_deadlines(core, &one, (size_t)-1) != PRISM_ERROR_INVALID_ARGUMENT) {
+    return 9;
+  }
+
   prism_destroy(core);
   prism_destroy(NULL); /* documented no-op */
 
   if (prism_create(NULL, NULL) != PRISM_ERROR_INVALID_ARGUMENT) {
-    return 9;
+    return 10;
   }
   printf("C ABI smoke OK\n");
   return 0;

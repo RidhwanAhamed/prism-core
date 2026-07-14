@@ -206,7 +206,12 @@ prism_result prism_create(const prism_config* config, prism_core** out_core) {
     return PRISM_ERROR_INVALID_ARGUMENT;
   }
 
-  prism_core* core = new (std::nothrow) prism_core(options);
+  prism_core* core = nullptr;
+  try {
+    core = new (std::nothrow) prism_core(options);
+  } catch (...) {
+    return PRISM_ERROR_OUT_OF_MEMORY; // nothrow covers the allocation, not member ctors
+  }
   if (core == nullptr) {
     return PRISM_ERROR_OUT_OF_MEMORY;
   }
@@ -237,29 +242,38 @@ prism_result prism_load_scene(prism_core* core, const char* scenes_json_path) {
     return PRISM_ERROR_INVALID_STATE; // one scene per handle in v1; load before start
   }
 
-  std::ifstream in(scenes_json_path);
-  if (!in.good()) {
-    return PRISM_ERROR_IO;
-  }
-  std::stringstream buffer;
-  buffer << in.rdbuf();
+  // Exception firewall: nothing may throw across the C boundary. bad_alloc (stem
+  // buffers can be large) maps to the documented OUT_OF_MEMORY; anything else on this
+  // I/O path maps to IO.
+  try {
+    std::ifstream in(scenes_json_path);
+    if (!in.good()) {
+      return PRISM_ERROR_IO;
+    }
+    std::stringstream buffer;
+    buffer << in.rdbuf();
 
-  std::string error;
-  const auto manifest = prism::pgae::parse_scene_manifest(buffer.str(), &error);
-  if (!manifest) {
+    std::string error;
+    const auto manifest = prism::pgae::parse_scene_manifest(buffer.str(), &error);
+    if (!manifest) {
+      return PRISM_ERROR_IO;
+    }
+    auto assets = prism::pgae::load_scene_assets(*manifest, manifest->default_scene,
+                                                 dir_of(scenes_json_path), &error);
+    if (!assets) {
+      return PRISM_ERROR_IO;
+    }
+    if (!core->rt.pgae.load_scene(std::move(*assets), &error)) {
+      return PRISM_ERROR_IO;
+    }
+    core->scene_loaded = true;
+    core->rt.ready.store(true, std::memory_order_release);
+    return PRISM_OK;
+  } catch (const std::bad_alloc&) {
+    return PRISM_ERROR_OUT_OF_MEMORY;
+  } catch (...) {
     return PRISM_ERROR_IO;
   }
-  auto assets = prism::pgae::load_scene_assets(*manifest, manifest->default_scene,
-                                               dir_of(scenes_json_path), &error);
-  if (!assets) {
-    return PRISM_ERROR_IO;
-  }
-  if (!core->rt.pgae.load_scene(std::move(*assets), &error)) {
-    return PRISM_ERROR_IO;
-  }
-  core->scene_loaded = true;
-  core->rt.ready.store(true, std::memory_order_release);
-  return PRISM_OK;
 }
 
 prism_result prism_start(prism_core* core) {
@@ -274,7 +288,12 @@ prism_result prism_start(prism_core* core) {
     publish_psv(*core, core->pce.start(now_ms())); // cold-start neutral vector (spec §6)
   }
   core->running.store(true, std::memory_order_release);
-  core->inference = std::thread(inference_main, core);
+  try {
+    core->inference = std::thread(inference_main, core);
+  } catch (...) {
+    core->running.store(false, std::memory_order_release);
+    return PRISM_ERROR_OUT_OF_MEMORY; // thread resources exhausted
+  }
   return PRISM_OK;
 }
 
@@ -311,17 +330,24 @@ prism_result prism_report_idle(prism_core* core, int64_t t_ms, int64_t idle_ms) 
 
 prism_result prism_report_task_deadlines(prism_core* core, const prism_task_deadline* tasks,
                                          size_t count) {
-  if (core == nullptr || (tasks == nullptr && count > 0)) {
+  // Human-scale bound (documented): also shields against negative lengths cast to
+  // size_t, which would otherwise throw std::length_error ACROSS the C boundary and
+  // abort C/dart hosts (found by adversarial review).
+  if (core == nullptr || (tasks == nullptr && count > 0) || count > 4096) {
     return PRISM_ERROR_INVALID_ARGUMENT;
   }
-  std::vector<prism::pce::TaskDeadline> deadlines;
-  deadlines.reserve(count);
-  for (size_t i = 0; i < count; ++i) {
-    deadlines.push_back({tasks[i].due_ms, priority_from(tasks[i].priority)});
+  try {
+    std::vector<prism::pce::TaskDeadline> deadlines;
+    deadlines.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+      deadlines.push_back({tasks[i].due_ms, priority_from(tasks[i].priority)});
+    }
+    std::lock_guard<std::mutex> lock(core->pce_mutex);
+    core->pce.report_task_deadlines(std::move(deadlines));
+    return PRISM_OK;
+  } catch (const std::bad_alloc&) {
+    return PRISM_ERROR_OUT_OF_MEMORY;
   }
-  std::lock_guard<std::mutex> lock(core->pce_mutex);
-  core->pce.report_task_deadlines(std::move(deadlines));
-  return PRISM_OK;
 }
 
 prism_result prism_get_psv(prism_core* core, prism_psv* out) {
