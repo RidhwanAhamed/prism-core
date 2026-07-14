@@ -83,8 +83,10 @@ class _SmokeScreenState extends State<SmokeScreen> {
       ];
       for (final name in files) {
         final out = File('${sceneDir.path}/$name');
-        if (!out.existsSync()) {
-          final data = await rootBundle.load('assets/scene/$name');
+        final data = await rootBundle.load('assets/scene/$name');
+        // Re-extract on size mismatch too: a partial write from an interrupted first
+        // launch would otherwise fail scene loading on every run (review finding).
+        if (!out.existsSync() || out.lengthSync() != data.lengthInBytes) {
           await out.writeAsBytes(data.buffer.asUint8List(), flush: true);
         }
       }
@@ -99,8 +101,12 @@ class _SmokeScreenState extends State<SmokeScreen> {
 
   void _start() {
     if (_scenesPath == null || _running) return;
+    // Declared OUTSIDE the try: on any failure the just-created engine must be disposed,
+    // or its native inference thread keeps running invisibly — one leaked engine per
+    // retry (adversarial review reproduced this against the real core).
+    PrismCore? core;
     try {
-      final core = PrismCore.create(
+      core = PrismCore.create(
         tzOffsetMin: -DateTime.now().timeZoneOffset.inMinutes,
       );
       core.loadScene(_scenesPath!);
@@ -127,7 +133,7 @@ class _SmokeScreenState extends State<SmokeScreen> {
       _poll();
     } on PrismException catch (e) {
       setState(() => _status = 'start failed: $e');
-      _core?.dispose();
+      core?.dispose(); // the local engine, not the (still-null) field
       _core = null;
     }
   }
