@@ -10,6 +10,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# ABI hygiene: symbols are hidden by default so a shared prism_core exports ONLY the
+# PRISM_API-annotated surface — not miniaudio or internal module symbols (review finding:
+# an unconstrained shared build exported 1348 symbols instead of 16).
+set(CMAKE_C_VISIBILITY_PRESET hidden)
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+
 option(PRISM_BUILD_TESTS "Build unit tests" ON)
 option(PRISM_BUILD_HARNESS "Build the desktop harness" ON)
 option(PRISM_SANITIZE "Enable Address + UB sanitizers" OFF)
@@ -31,6 +38,8 @@ add_subdirectory(third_party)
 add_subdirectory(psv)
 add_subdirectory(pce)
 add_subdirectory(pgae)
+add_subdirectory(core)
+add_subdirectory(tools)
 
 if(PRISM_BUILD_HARNESS)
   add_subdirectory(harness)

@@ -125,9 +125,8 @@ battery estimate) measured and recorded against the budgets in the build plan.
 - Configure: `cmake --preset debug` (also `release`, `asan`)
 - Build: `cmake --build --preset debug`
 - Test: `ctest --preset debug` (includes the `firewall_includes` check)
-- Harness (from the repo root; `--seconds N` to auto-exit, omit to play until Enter):
-  - stem loop: `./build/debug/harness/prism_harness assets/stems/bed.wav`
-  - PGAE sweep: `./build/debug/harness/prism_harness --scene assets/scenes.json`
-    (`--fixture tests/golden/fixture-*.jsonl` to drive from a golden trace)
-  - live three-thread pipeline: `./build/debug/harness/prism_harness --scene assets/scenes.json --rt`
+- Harness (C ABI only, from the repo root): `./build/debug/harness/prism_harness`
+  (`--scene <scenes.json>`, `--seconds N` to auto-exit; omit to play until Enter) —
+  runs the full live pipeline through `include/prism/prism_core.h`
+- PCE tick benchmark: `./build/debug/tools/pce_bench`
 - Format: `find psv pce pgae harness tests/unit -name "*.cpp" -o -name "*.h" | xargs clang-format -i`

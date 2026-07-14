@@ -8,6 +8,7 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 add_executable(prism_unit_tests
+  core/abi_test.cpp
   pce/parity_test.cpp
   pce/pce_test.cpp
   pgae/mapping_test.cpp
@@ -18,11 +19,17 @@ add_executable(prism_unit_tests
   psv/psv_test.cpp
   unit/smoke_test.cpp)
 
+# Pure C consumer of the public header: proves the ABI is real C (ffigen/OEM hosts).
+add_executable(prism_c_abi_smoke core/c_compat.c)
+target_link_libraries(prism_c_abi_smoke PRIVATE prism::core)
+add_test(NAME c_abi_smoke COMMAND prism_c_abi_smoke)
+
 target_compile_definitions(prism_unit_tests PRIVATE
   PRISM_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/tests/golden"
   PRISM_ASSETS_DIR="${PROJECT_SOURCE_DIR}/assets")
 # Links all three modules: green tests prove the target graph resolves.
 target_link_libraries(prism_unit_tests PRIVATE
+  prism::core
   prism::psv
   prism::pce
   prism::pgae

@@ -8,7 +8,11 @@ namespace prism::pce {
 
 psv::StateVector Pce::start(int64_t now_ms) {
   psv::StateVector neutral = psv::neutral(opts_.vertical, now_ms);
-  neutral.sequence = seq_; // the probe stamps sequence 0 on the cold-start vector
+  // First start stamps sequence 0, exactly like the probe (golden-trace parity depends
+  // on it). A RESTART (start after stop) continues the sequence instead: reusing the
+  // previous run's number for different content would break consumers that dedup by
+  // sequence — found by adversarial review of the C ABI.
+  neutral.sequence = last_psv_ ? seq_ + 1 : seq_;
   note_emit(neutral, now_ms);
   return neutral;
 }
