@@ -7,7 +7,7 @@ Android/iOS on-device numbers land in Tasks 6–7 against the real budgets.
 
 | Metric | Budget | Measured | Method |
 |---|---|---|---|
-| PCE inference per tick | < 1 ms | **0.87 µs avg, 96 µs max** over 100k ticks, full behavioral window | `prism_harness --bench-pce` (debug build; committed, reproducible) |
+| PCE inference per tick | < 1 ms | **0.87 µs avg, 96 µs max** over 100k ticks, full behavioral window | `tools/pce_bench` (debug build; committed, reproducible) |
 | Audio render CPU | < 10 % of one mid-2022 Android core | **2.8 % of one M4 core**, whole process | `/usr/bin/time -l`, 30 s live `--rt` run (3 threads + device I/O): 0.85 s CPU / 30.27 s wall |
 | Offline render throughput | — | **≈ 175× realtime** | 10 min of audio rendered in ≤ 3.4 s (PgaeRtSafety ctest) |
 | Resident memory | < 50 MB incl. stems | **21.3 MB peak** | `/usr/bin/time -l` maximum RSS; steady (no growth) across a 60 s sampled run |
@@ -29,6 +29,10 @@ Reproduce:
 ```bash
 cmake --preset debug && cmake --build --preset debug
 /Applications/CMake.app/Contents/bin/ctest --preset debug -R "PgaeRtSafety|rt_lock|RtExchange"
-./build/debug/harness/prism_harness --bench-pce
-/usr/bin/time -l ./build/debug/harness/prism_harness --scene assets/scenes.json --rt --seconds 30
+./build/debug/tools/pce_bench
+/usr/bin/time -l ./build/debug/harness/prism_harness --seconds 30
 ```
+
+(As of Task 5 the harness runs the same live pipeline through the public C ABI; the
+Task 4 numbers above were taken with the pre-ABI `--rt` harness — same threads, same
+engines, one extra indirection now.)

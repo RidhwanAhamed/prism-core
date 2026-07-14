@@ -1,10 +1,8 @@
-# Desktop harness. Through Task 4 it may link internal targets; from Task 5 it
-# is rebuilt on top of the public C ABI only (CLAUDE.md).
+# Desktop harness. From Task 5 on it consumes ONLY the public C ABI (CLAUDE.md): it
+# links prism::core, whose include surface is include/prism/prism_core.h alone — the
+# internal module headers are not even on its include path, so a violation fails to
+# compile. It doubles as the binding reference for dart:ffi / OEM hosts.
 add_executable(prism_harness
   main.cpp)
-target_link_libraries(prism_harness PRIVATE
-  prism::pce
-  prism::pgae
-  prism::psv
-  miniaudio)
+target_link_libraries(prism_harness PRIVATE prism::core)
 prism_set_warnings(prism_harness)
