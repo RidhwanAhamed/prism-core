@@ -15,8 +15,10 @@
 // under a 10-minute run." This TU replaces the global allocation functions for the whole
 // test binary; a THREAD-LOCAL flag scopes counting to the render thread, so the writer
 // thread (and gtest itself) can allocate freely while the audio path is being audited.
-// Locks are excluded by construction (the handoff is atomics-only; see the
-// rt_lock_primitives ctest that greps the render-path sources for locking primitives).
+// Coverage split (per adversarial review): this dynamic audit catches the C++ operator
+// new/delete family only — direct C-allocator calls (malloc/free) and locks allocate
+// nothing it can see, so those classes are enforced by the rt_lock_primitives ctest,
+// which token-scans the compiler-computed include closure of the render path.
 
 namespace {
 thread_local bool t_rt_audit = false;

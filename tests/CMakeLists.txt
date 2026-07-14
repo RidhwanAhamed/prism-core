@@ -37,10 +37,12 @@ add_test(NAME firewall_includes
   COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR}
           -P ${PROJECT_SOURCE_DIR}/cmake/CheckFirewall.cmake)
 
-# Static half of the real-time rules: render-path sources must not name locking/
-# blocking/logging primitives (the dynamic half is PgaeRtSafety's instrumented run).
+# Static half of the real-time rules: the compiler-computed include closure of the
+# render path must not name locking/blocking/logging/C-allocator primitives (the
+# dynamic half is PgaeRtSafety's instrumented run, which covers operator new/delete).
 add_test(NAME rt_lock_primitives
   COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR}
+          -DCXX=${CMAKE_CXX_COMPILER}
           -P ${PROJECT_SOURCE_DIR}/cmake/CheckRtPrimitives.cmake)
 
 # Independent schema conformance: emitted PSVs validated against the spec's
