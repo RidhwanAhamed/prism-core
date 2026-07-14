@@ -106,21 +106,22 @@ class _SmokeScreenState extends State<SmokeScreen> {
     // retry (adversarial review reproduced this against the real core).
     PrismCore? core;
     try {
-      core = PrismCore.create(
+      final c = PrismCore.create(
         tzOffsetMin: -DateTime.now().timeZoneOffset.inMinutes,
       );
-      core.loadScene(_scenesPath!);
+      core = c;
+      c.loadScene(_scenesPath!);
       // One synthetic deadline tomorrow so deadline pressure participates.
-      core.reportTaskDeadlines([
+      c.reportTaskDeadlines([
         TaskDeadline(
           dueMs: DateTime.now().millisecondsSinceEpoch + 24 * 3600 * 1000,
           priority: TaskPriority.high,
         ),
       ]);
-      core.start();
-      core.deviceStart();
+      c.start();
+      c.deviceStart();
 
-      _core = core;
+      _core = c;
       _startedAt = DateTime.now();
       _tick = 0;
       // The simulated capture layer: one sample every 5s, like the real shells.
@@ -128,7 +129,7 @@ class _SmokeScreenState extends State<SmokeScreen> {
       _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) => _poll());
       setState(() {
         _running = true;
-        _status = 'running | ${core.sampleRate} Hz | core ${core.version}';
+        _status = 'running | ${c.sampleRate} Hz | core ${c.version}';
       });
       _poll();
     } on PrismException catch (e) {
