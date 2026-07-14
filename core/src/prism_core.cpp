@@ -222,6 +222,10 @@ void prism_destroy(prism_core* core) {
     return;
   }
   prism_stop(core);
+  // Belt only, NOT the contract: a pull-model host must have quiesced its render thread
+  // already (see the header's threading contract). Dropping `ready` narrows — but cannot
+  // close — the window for a host that violates it.
+  core->rt.ready.store(false, std::memory_order_release);
   delete core;
 }
 

@@ -20,6 +20,12 @@
  *   - prism_render: exactly ONE audio thread (single-reader contract). Wait-free,
  *     allocation-free, lock-free — safe inside a real-time audio callback. Unnecessary
  *     when the built-in device is running (it renders internally).
+ *   - QUIESCENCE BEFORE DESTROY: no library can stop a thread it does not own. The host
+ *     MUST guarantee that no thread is inside ANY prism_* call — above all a pull-model
+ *     audio thread inside prism_render — when prism_destroy runs, or behavior is
+ *     undefined (use-after-free). Stop your audio callback first, then destroy. The
+ *     built-in device and the internal inference thread ARE owned by the library and are
+ *     shut down by prism_destroy automatically.
  *
  * Fully local by design: nothing in this library performs network I/O, and raw input
  * events are processed in memory only — never persisted.
@@ -31,6 +37,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Export annotation: when the core is built as a shared library, ONLY prism_* symbols
+ * are visible (internal targets compile with hidden visibility). Windows dllexport/
+ * dllimport plumbing lands with the first Windows target. */
+#ifndef PRISM_API
+#if defined(_WIN32)
+#define PRISM_API
+#else
+#define PRISM_API __attribute__((visibility("default")))
+#endif
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -40,7 +57,7 @@ extern "C" {
 #define PRISM_ABI_VERSION_PATCH 0
 
 /* "MAJOR.MINOR.PATCH" of the linked library. Compare against the macros above. */
-const char* prism_version(void);
+PRISM_API const char* prism_version(void);
 
 typedef enum prism_result {
   PRISM_OK = 0,
@@ -52,7 +69,7 @@ typedef enum prism_result {
 } prism_result;
 
 /* Static, human-readable description; never NULL. */
-const char* prism_result_description(prism_result result);
+PRISM_API const char* prism_result_description(prism_result result);
 
 /* Opaque engine handle. One handle = one PCE + one PGAE + their PSV exchange. */
 typedef struct prism_core prism_core;
@@ -79,28 +96,28 @@ typedef struct prism_config {
 } prism_config;
 
 /* All defaults (aqademiq profile, UTC, spec cadence). */
-prism_config prism_config_default(void);
+PRISM_API prism_config prism_config_default(void);
 
 /* Create an engine. `config` may be NULL for all defaults. On success writes the new
  * handle to *out_core. The handle must be released with prism_destroy. */
-prism_result prism_create(const prism_config* config, prism_core** out_core);
+PRISM_API prism_result prism_create(const prism_config* config, prism_core** out_core);
 
 /* Stops everything still running (inference thread, built-in device) and frees the
  * handle. NULL is a no-op. */
-void prism_destroy(prism_core* core);
+PRISM_API void prism_destroy(prism_core* core);
 
 /* Load a scene manifest (scenes.json; stem paths resolve relative to it). Decodes and
  * preloads every stem of the default scene — file I/O happens HERE, never at render
  * time. Call once, before prism_start / any rendering. INVALID_STATE after start. */
-prism_result prism_load_scene(prism_core* core, const char* scenes_json_path);
+PRISM_API prism_result prism_load_scene(prism_core* core, const char* scenes_json_path);
 
 /* Start the engine: emits the cold-start neutral PSV (spec §6) and launches the internal
  * inference thread (evaluates on the cadence + significant-change rule). Requires a
  * loaded scene. INVALID_STATE if already started. */
-prism_result prism_start(prism_core* core);
+PRISM_API prism_result prism_start(prism_core* core);
 
 /* Stop the inference thread (and the built-in device if running). Idempotent. */
-prism_result prism_stop(prism_core* core);
+PRISM_API prism_result prism_stop(prism_core* core);
 
 /* --- Event ingress -------------------------------------------------------------------
  * Platform shells capture raw events and forward them; no inference logic lives on the
@@ -108,9 +125,9 @@ prism_result prism_stop(prism_core* core);
  * crosses this boundary: a switch is a bare timestamp, idle is a duration, tasks are
  * due instants plus priorities. Thread-safe; never call from the render callback. */
 
-prism_result prism_report_app_switch(prism_core* core, int64_t t_ms);
+PRISM_API prism_result prism_report_app_switch(prism_core* core, int64_t t_ms);
 
-prism_result prism_report_idle(prism_core* core, int64_t t_ms, int64_t idle_ms);
+PRISM_API prism_result prism_report_idle(prism_core* core, int64_t t_ms, int64_t idle_ms);
 
 typedef struct prism_task_deadline {
   int64_t due_ms;   /* epoch ms */
@@ -119,8 +136,8 @@ typedef struct prism_task_deadline {
 
 /* Replace the full task-deadline snapshot (matches how hosts observe task lists).
  * `tasks` may be NULL when `count` is 0 (an empty list is a valid state). */
-prism_result prism_report_task_deadlines(prism_core* core, const prism_task_deadline* tasks,
-                                         size_t count);
+PRISM_API prism_result prism_report_task_deadlines(prism_core* core,
+                                                   const prism_task_deadline* tasks, size_t count);
 
 /* --- PSV read-out (for UI) ----------------------------------------------------------- */
 
@@ -137,7 +154,7 @@ typedef struct prism_psv {
 
 /* Copy the most recently emitted PSV into *out. INVALID_STATE before prism_start (the
  * cold-start vector exists from start onward). Thread-safe. */
-prism_result prism_get_psv(prism_core* core, prism_psv* out);
+PRISM_API prism_result prism_get_psv(prism_core* core, prism_psv* out);
 
 /* --- Audio out ------------------------------------------------------------------------
  * Two ways to get sound, mutually exclusive per handle:
@@ -147,19 +164,19 @@ prism_result prism_get_psv(prism_core* core, prism_psv* out);
  *                     (desktop harness, quick starts). */
 
 /* Sample rate of the loaded scene's stems (0 before a scene is loaded). Mono float32. */
-uint32_t prism_sample_rate(const prism_core* core);
+PRISM_API uint32_t prism_sample_rate(const prism_core* core);
 
 /* Render `frame_count` mono float32 frames into out_frames. Real-time safe: wait-free,
  * no allocation, no locks, no I/O, no logging. Single audio thread only. Before a scene
  * is loaded, fills silence and returns INVALID_STATE. */
-prism_result prism_render(prism_core* core, float* out_frames, uint32_t frame_count);
+PRISM_API prism_result prism_render(prism_core* core, float* out_frames, uint32_t frame_count);
 
 /* Open and start the built-in playback device (renders internally; do not also call
  * prism_render). Requires a loaded scene. INVALID_STATE if already running. */
-prism_result prism_device_start(prism_core* core);
+PRISM_API prism_result prism_device_start(prism_core* core);
 
 /* Stop and close the built-in device. Idempotent. */
-prism_result prism_device_stop(prism_core* core);
+PRISM_API prism_result prism_device_stop(prism_core* core);
 
 #ifdef __cplusplus
 } /* extern "C" */
