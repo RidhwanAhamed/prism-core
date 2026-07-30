@@ -12,3 +12,9 @@ build/
 # Workflow-agent worktrees (session tooling, never repo content)
 .claude/
 core/ios/prism_core.xcframework/
+
+# Dart/Flutter build output. .dart_tool holds resolved package config and
+# per-SDK compiler snapshots — a ~4 MB incremental_kernel that rewrites itself on
+# every run, plus a new snapshot pair per Dart version. Tracking it churns binaries
+# in every bindings commit and conflicts on any SDK difference between machines.
+.dart_tool/
