@@ -236,6 +236,46 @@ class PrismCoreBindings {
   late final _prism_get_psv = _prism_get_psvPtr.asFunction<
       int Function(ffi.Pointer<prism_core>, ffi.Pointer<prism_psv>)>();
 
+  /// Pin the PSV. Takes effect immediately — the vector is published on return, so the mood
+  /// starts moving without waiting for the next inference tick. Ramped by the engine like
+  /// any other PSV change; nothing steps. Calling again replaces the current override.
+  /// Valid before prism_start (the pinned vector then replaces the cold-start neutral one).
+  /// Thread-safe.
+  prism_result prism_set_mood_override(
+    ffi.Pointer<prism_core> core,
+    ffi.Pointer<prism_mood_override> override_in,
+  ) {
+    return prism_result.fromValue(_prism_set_mood_override(
+      core,
+      override_in,
+    ));
+  }
+
+  late final _prism_set_mood_overridePtr = _lookup<
+      ffi.NativeFunction<
+          ffi.UnsignedInt Function(ffi.Pointer<prism_core>,
+              ffi.Pointer<prism_mood_override>)>>('prism_set_mood_override');
+  late final _prism_set_mood_override = _prism_set_mood_overridePtr.asFunction<
+      int Function(
+          ffi.Pointer<prism_core>, ffi.Pointer<prism_mood_override>)>();
+
+  /// Release the pin and hand control back to the PCE, which resumes at its next tick.
+  /// Idempotent: clearing when nothing is pinned succeeds and does nothing. Thread-safe.
+  prism_result prism_clear_mood_override(
+    ffi.Pointer<prism_core> core,
+  ) {
+    return prism_result.fromValue(_prism_clear_mood_override(
+      core,
+    ));
+  }
+
+  late final _prism_clear_mood_overridePtr = _lookup<
+          ffi
+          .NativeFunction<ffi.UnsignedInt Function(ffi.Pointer<prism_core>)>>(
+      'prism_clear_mood_override');
+  late final _prism_clear_mood_override = _prism_clear_mood_overridePtr
+      .asFunction<int Function(ffi.Pointer<prism_core>)>();
+
   /// Sample rate of the loaded scene's stems (0 before a scene is loaded). Mono float32.
   int prism_sample_rate(
     ffi.Pointer<prism_core> core,
@@ -306,264 +346,6 @@ class PrismCoreBindings {
   late final _prism_device_stop =
       _prism_device_stopPtr.asFunction<int Function(ffi.Pointer<prism_core>)>();
 }
-
-typedef __int8_t = ffi.SignedChar;
-typedef Dart__int8_t = int;
-typedef __uint8_t = ffi.UnsignedChar;
-typedef Dart__uint8_t = int;
-typedef __int16_t = ffi.Short;
-typedef Dart__int16_t = int;
-typedef __uint16_t = ffi.UnsignedShort;
-typedef Dart__uint16_t = int;
-typedef __int32_t = ffi.Int;
-typedef Dart__int32_t = int;
-typedef __uint32_t = ffi.UnsignedInt;
-typedef Dart__uint32_t = int;
-typedef __int64_t = ffi.LongLong;
-typedef Dart__int64_t = int;
-typedef __uint64_t = ffi.UnsignedLongLong;
-typedef Dart__uint64_t = int;
-typedef __darwin_intptr_t = ffi.Long;
-typedef Dart__darwin_intptr_t = int;
-typedef __darwin_natural_t = ffi.UnsignedInt;
-typedef Dart__darwin_natural_t = int;
-
-/// The rune type below is declared to be an ``int'' instead of the more natural
-/// ``unsigned long'' or ``long''.  Two things are happening here.  It is not
-/// unsigned so that EOF (-1) can be naturally assigned to it and used.  Also,
-/// it looks like 10646 will be a 31 bit standard.  This means that if your
-/// ints cannot hold 32 bits, you will be in trouble.  The reason an int was
-/// chosen over a long is that the is*() and to*() routines take ints (says
-/// ANSI C), but they use __darwin_ct_rune_t instead of int.  By changing it
-/// here, you lose a bit of ANSI conformance, but your programs will still
-/// work.
-///
-/// NOTE: rune_t is not covered by ANSI nor other standards, and should not
-/// be instantiated outside of lib/libc/locale.  Use wchar_t.  wchar_t and
-/// rune_t must be the same type.  Also wint_t must be no narrower than
-/// wchar_t, and should also be able to hold all members of the largest
-/// character set plus one extra value (WEOF). wint_t must be at least 16 bits.
-typedef __darwin_ct_rune_t = ffi.Int;
-typedef Dart__darwin_ct_rune_t = int;
-
-/// mbstate_t is an opaque object to keep conversion state, during multibyte
-/// stream conversions.  The content must not be referenced by user programs.
-final class __mbstate_t extends ffi.Union {
-  @ffi.Array.multi([128])
-  external ffi.Array<ffi.Char> __mbstate8;
-
-  /// for alignment
-  @ffi.LongLong()
-  external int _mbstateL;
-}
-
-typedef __darwin_mbstate_t = __mbstate_t;
-typedef __darwin_ptrdiff_t = ffi.Long;
-typedef Dart__darwin_ptrdiff_t = int;
-typedef __darwin_size_t = ffi.UnsignedLong;
-typedef Dart__darwin_size_t = int;
-typedef __builtin_va_list = ffi.Pointer<ffi.Char>;
-typedef __darwin_va_list = __builtin_va_list;
-typedef __darwin_wchar_t = ffi.Int;
-typedef Dart__darwin_wchar_t = int;
-typedef __darwin_rune_t = __darwin_wchar_t;
-typedef __darwin_wint_t = ffi.Int;
-typedef Dart__darwin_wint_t = int;
-typedef __darwin_clock_t = ffi.UnsignedLong;
-typedef Dart__darwin_clock_t = int;
-typedef __darwin_socklen_t = __uint32_t;
-typedef __darwin_ssize_t = ffi.Long;
-typedef Dart__darwin_ssize_t = int;
-typedef __darwin_time_t = ffi.Long;
-typedef Dart__darwin_time_t = int;
-typedef __darwin_blkcnt_t = __int64_t;
-typedef __darwin_blksize_t = __int32_t;
-typedef __darwin_dev_t = __int32_t;
-typedef __darwin_fsblkcnt_t = ffi.UnsignedInt;
-typedef Dart__darwin_fsblkcnt_t = int;
-typedef __darwin_fsfilcnt_t = ffi.UnsignedInt;
-typedef Dart__darwin_fsfilcnt_t = int;
-typedef __darwin_gid_t = __uint32_t;
-typedef __darwin_id_t = __uint32_t;
-typedef __darwin_ino64_t = __uint64_t;
-typedef __darwin_ino_t = __darwin_ino64_t;
-typedef __darwin_mach_port_name_t = __darwin_natural_t;
-typedef __darwin_mach_port_t = __darwin_mach_port_name_t;
-typedef __darwin_mode_t = __uint16_t;
-typedef __darwin_off_t = __int64_t;
-typedef __darwin_pid_t = __int32_t;
-typedef __darwin_sigset_t = __uint32_t;
-typedef __darwin_suseconds_t = __int32_t;
-typedef __darwin_uid_t = __uint32_t;
-typedef __darwin_useconds_t = __uint32_t;
-
-final class __darwin_pthread_handler_rec extends ffi.Struct {
-  /// Routine to call
-  external ffi
-      .Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>
-      __routine;
-
-  /// Argument to pass
-  external ffi.Pointer<ffi.Void> __arg;
-
-  external ffi.Pointer<__darwin_pthread_handler_rec> __next;
-}
-
-final class _opaque_pthread_attr_t extends ffi.Struct {
-  @ffi.Long()
-  external int __sig;
-
-  @ffi.Array.multi([56])
-  external ffi.Array<ffi.Char> __opaque;
-}
-
-final class _opaque_pthread_cond_t extends ffi.Struct {
-  @ffi.Long()
-  external int __sig;
-
-  @ffi.Array.multi([40])
-  external ffi.Array<ffi.Char> __opaque;
-}
-
-final class _opaque_pthread_condattr_t extends ffi.Struct {
-  @ffi.Long()
-  external int __sig;
-
-  @ffi.Array.multi([8])
-  external ffi.Array<ffi.Char> __opaque;
-}
-
-final class _opaque_pthread_mutex_t extends ffi.Struct {
-  @ffi.Long()
-  external int __sig;
-
-  @ffi.Array.multi([56])
-  external ffi.Array<ffi.Char> __opaque;
-}
-
-final class _opaque_pthread_mutexattr_t extends ffi.Struct {
-  @ffi.Long()
-  external int __sig;
-
-  @ffi.Array.multi([8])
-  external ffi.Array<ffi.Char> __opaque;
-}
-
-final class _opaque_pthread_once_t extends ffi.Struct {
-  @ffi.Long()
-  external int __sig;
-
-  @ffi.Array.multi([8])
-  external ffi.Array<ffi.Char> __opaque;
-}
-
-final class _opaque_pthread_rwlock_t extends ffi.Struct {
-  @ffi.Long()
-  external int __sig;
-
-  @ffi.Array.multi([192])
-  external ffi.Array<ffi.Char> __opaque;
-}
-
-final class _opaque_pthread_rwlockattr_t extends ffi.Struct {
-  @ffi.Long()
-  external int __sig;
-
-  @ffi.Array.multi([16])
-  external ffi.Array<ffi.Char> __opaque;
-}
-
-final class _opaque_pthread_t extends ffi.Struct {
-  @ffi.Long()
-  external int __sig;
-
-  external ffi.Pointer<__darwin_pthread_handler_rec> __cleanup_stack;
-
-  @ffi.Array.multi([8176])
-  external ffi.Array<ffi.Char> __opaque;
-}
-
-typedef __darwin_pthread_attr_t = _opaque_pthread_attr_t;
-typedef __darwin_pthread_cond_t = _opaque_pthread_cond_t;
-typedef __darwin_pthread_condattr_t = _opaque_pthread_condattr_t;
-typedef __darwin_pthread_key_t = ffi.UnsignedLong;
-typedef Dart__darwin_pthread_key_t = int;
-typedef __darwin_pthread_mutex_t = _opaque_pthread_mutex_t;
-typedef __darwin_pthread_mutexattr_t = _opaque_pthread_mutexattr_t;
-typedef __darwin_pthread_once_t = _opaque_pthread_once_t;
-typedef __darwin_pthread_rwlock_t = _opaque_pthread_rwlock_t;
-typedef __darwin_pthread_rwlockattr_t = _opaque_pthread_rwlockattr_t;
-typedef __darwin_pthread_t = ffi.Pointer<_opaque_pthread_t>;
-typedef __darwin_nl_item = ffi.Int;
-typedef Dart__darwin_nl_item = int;
-typedef __darwin_wctrans_t = ffi.Int;
-typedef Dart__darwin_wctrans_t = int;
-typedef __darwin_wctype_t = __uint32_t;
-typedef u_int8_t = ffi.UnsignedChar;
-typedef Dartu_int8_t = int;
-typedef u_int16_t = ffi.UnsignedShort;
-typedef Dartu_int16_t = int;
-typedef u_int32_t = ffi.UnsignedInt;
-typedef Dartu_int32_t = int;
-typedef u_int64_t = ffi.UnsignedLongLong;
-typedef Dartu_int64_t = int;
-typedef register_t = ffi.Int64;
-typedef Dartregister_t = int;
-typedef user_addr_t = u_int64_t;
-typedef user_size_t = u_int64_t;
-typedef user_ssize_t = ffi.Int64;
-typedef Dartuser_ssize_t = int;
-typedef user_long_t = ffi.Int64;
-typedef Dartuser_long_t = int;
-typedef user_ulong_t = u_int64_t;
-typedef user_time_t = ffi.Int64;
-typedef Dartuser_time_t = int;
-typedef user_off_t = ffi.Int64;
-typedef Dartuser_off_t = int;
-typedef syscall_arg_t = u_int64_t;
-typedef ptrdiff_t = __darwin_ptrdiff_t;
-typedef rsize_t = __darwin_size_t;
-typedef wint_t = __darwin_wint_t;
-
-/// 7.18.1.2 Minimum-width integer types
-typedef int_least8_t = ffi.Int8;
-typedef Dartint_least8_t = int;
-typedef int_least16_t = ffi.Int16;
-typedef Dartint_least16_t = int;
-typedef int_least32_t = ffi.Int32;
-typedef Dartint_least32_t = int;
-typedef int_least64_t = ffi.Int64;
-typedef Dartint_least64_t = int;
-typedef uint_least8_t = ffi.Uint8;
-typedef Dartuint_least8_t = int;
-typedef uint_least16_t = ffi.Uint16;
-typedef Dartuint_least16_t = int;
-typedef uint_least32_t = ffi.Uint32;
-typedef Dartuint_least32_t = int;
-typedef uint_least64_t = ffi.Uint64;
-typedef Dartuint_least64_t = int;
-
-/// 7.18.1.3 Fastest-width integer types
-typedef int_fast8_t = ffi.Int8;
-typedef Dartint_fast8_t = int;
-typedef int_fast16_t = ffi.Int16;
-typedef Dartint_fast16_t = int;
-typedef int_fast32_t = ffi.Int32;
-typedef Dartint_fast32_t = int;
-typedef int_fast64_t = ffi.Int64;
-typedef Dartint_fast64_t = int;
-typedef uint_fast8_t = ffi.Uint8;
-typedef Dartuint_fast8_t = int;
-typedef uint_fast16_t = ffi.Uint16;
-typedef Dartuint_fast16_t = int;
-typedef uint_fast32_t = ffi.Uint32;
-typedef Dartuint_fast32_t = int;
-typedef uint_fast64_t = ffi.Uint64;
-typedef Dartuint_fast64_t = int;
-typedef intmax_t = ffi.Long;
-typedef Dartintmax_t = int;
-typedef uintmax_t = ffi.UnsignedLong;
-typedef Dartuintmax_t = int;
 
 enum prism_result {
   PRISM_OK(0),
@@ -687,188 +469,54 @@ final class prism_psv extends ffi.Struct {
   external ffi.Array<ffi.Char> mode_hint;
 }
 
-const int __has_safe_buffers = 1;
-
-const int __DARWIN_ONLY_64_BIT_INO_T = 1;
-
-const int __DARWIN_ONLY_UNIX_CONFORMANCE = 1;
-
-const int __DARWIN_ONLY_VERS_1050 = 1;
-
-const int __DARWIN_UNIX03 = 1;
-
-const int __DARWIN_64_BIT_INO_T = 1;
-
-const int __DARWIN_VERS_1050 = 1;
-
-const int __DARWIN_NON_CANCELABLE = 0;
-
-const String __DARWIN_SUF_EXTSN = '\$DARWIN_EXTSN';
-
-const int __DARWIN_C_ANSI = 4096;
-
-const int __DARWIN_C_FULL = 900000;
-
-const int __DARWIN_C_LEVEL = 900000;
-
-const int __STDC_WANT_LIB_EXT1__ = 1;
-
-const int __DARWIN_NO_LONG_LONG = 0;
-
-const int _DARWIN_FEATURE_64_BIT_INODE = 1;
-
-const int _DARWIN_FEATURE_ONLY_64_BIT_INODE = 1;
-
-const int _DARWIN_FEATURE_ONLY_VERS_1050 = 1;
-
-const int _DARWIN_FEATURE_ONLY_UNIX_CONFORMANCE = 1;
-
-const int _DARWIN_FEATURE_UNIX_CONFORMANCE = 3;
-
-const int __has_ptrcheck = 0;
-
-const int __has_bounds_safety_attributes = 0;
-
-const int __DARWIN_NULL = 0;
-
-const int __PTHREAD_SIZE__ = 8176;
-
-const int __PTHREAD_ATTR_SIZE__ = 56;
-
-const int __PTHREAD_MUTEXATTR_SIZE__ = 8;
-
-const int __PTHREAD_MUTEX_SIZE__ = 56;
-
-const int __PTHREAD_CONDATTR_SIZE__ = 8;
-
-const int __PTHREAD_COND_SIZE__ = 40;
-
-const int __PTHREAD_ONCE_SIZE__ = 8;
-
-const int __PTHREAD_RWLOCK_SIZE__ = 192;
-
-const int __PTHREAD_RWLOCKATTR_SIZE__ = 16;
-
-const int __DARWIN_WCHAR_MAX = 2147483647;
-
-const int __DARWIN_WCHAR_MIN = -2147483648;
-
-const int __DARWIN_WEOF = -1;
-
-const int _FORTIFY_SOURCE = 2;
-
-const int NULL = 0;
-
-const int USER_ADDR_NULL = 0;
-
-const int __WORDSIZE = 64;
-
-const int INT8_MAX = 127;
-
-const int INT16_MAX = 32767;
-
-const int INT32_MAX = 2147483647;
-
-const int INT64_MAX = 9223372036854775807;
-
-const int INT8_MIN = -128;
-
-const int INT16_MIN = -32768;
-
-const int INT32_MIN = -2147483648;
-
-const int INT64_MIN = -9223372036854775808;
-
-const int UINT8_MAX = 255;
-
-const int UINT16_MAX = 65535;
-
-const int UINT32_MAX = 4294967295;
-
-const int UINT64_MAX = -1;
-
-const int INT_LEAST8_MIN = -128;
-
-const int INT_LEAST16_MIN = -32768;
-
-const int INT_LEAST32_MIN = -2147483648;
-
-const int INT_LEAST64_MIN = -9223372036854775808;
-
-const int INT_LEAST8_MAX = 127;
-
-const int INT_LEAST16_MAX = 32767;
-
-const int INT_LEAST32_MAX = 2147483647;
-
-const int INT_LEAST64_MAX = 9223372036854775807;
-
-const int UINT_LEAST8_MAX = 255;
-
-const int UINT_LEAST16_MAX = 65535;
-
-const int UINT_LEAST32_MAX = 4294967295;
-
-const int UINT_LEAST64_MAX = -1;
-
-const int INT_FAST8_MIN = -128;
-
-const int INT_FAST16_MIN = -32768;
-
-const int INT_FAST32_MIN = -2147483648;
-
-const int INT_FAST64_MIN = -9223372036854775808;
-
-const int INT_FAST8_MAX = 127;
-
-const int INT_FAST16_MAX = 32767;
-
-const int INT_FAST32_MAX = 2147483647;
-
-const int INT_FAST64_MAX = 9223372036854775807;
-
-const int UINT_FAST8_MAX = 255;
-
-const int UINT_FAST16_MAX = 65535;
-
-const int UINT_FAST32_MAX = 4294967295;
-
-const int UINT_FAST64_MAX = -1;
-
-const int INTPTR_MAX = 9223372036854775807;
-
-const int INTPTR_MIN = -9223372036854775808;
-
-const int UINTPTR_MAX = -1;
-
-const int INTMAX_MAX = 9223372036854775807;
-
-const int UINTMAX_MAX = -1;
-
-const int INTMAX_MIN = -9223372036854775808;
-
-const int PTRDIFF_MIN = -9223372036854775808;
-
-const int PTRDIFF_MAX = 9223372036854775807;
-
-const int SIZE_MAX = -1;
-
-const int RSIZE_MAX = 9223372036854775807;
-
-const int WCHAR_MAX = 2147483647;
-
-const int WCHAR_MIN = -2147483648;
-
-const int WINT_MIN = -2147483648;
-
-const int WINT_MAX = 2147483647;
-
-const int SIG_ATOMIC_MIN = -2147483648;
-
-const int SIG_ATOMIC_MAX = 2147483647;
+/// --- Host mood override ---------------------------------------------------------------
+/// Prism Venues puts a human in the loop: a manager taps one of six named moods and the
+/// room must follow. The PCE infers state, it does not take requests, so there was no way
+/// to express that. This pins the vector the audio engine consumes until it is cleared.
+///
+/// It is NOT a volume or scene control. A mood is a point in PSV space, so a pinned mood
+/// reaches the audio the same way an inferred one does — through the §5 mapping. High
+/// arousal opens the density gates and raises the mapped level; low arousal leaves the
+/// scene sparse and quiet. Nothing bypasses the mapping, the smoothing, or the limiter,
+/// and no DSP constant moves.
+///
+/// Confidence is explicit because it is load-bearing: every consumer blends toward
+/// neutral as confidence falls (spec §8.1), so an override published at low confidence
+/// would be pulled back to the middle and barely change the sound. A manual pin is a
+/// statement of fact about the room, so hosts should pass 1.0 unless they mean otherwise.
+///
+/// The firewall is untouched: this sets the PSV the PCE would have emitted, at the same
+/// publish point, and the audio engine still sees nothing but a PSV. The render thread is
+/// untouched too — the override is applied on the control side, before the atomic handoff.
+///
+/// While an override is set the PCE keeps running and its output keeps being discarded;
+/// clearing restores inferred state from the next tick.
+final class prism_mood_override extends ffi.Struct {
+  /// NUL-terminated hint naming the mood, e.g. "venue_peak". Copied, not retained; may be
+  /// NULL or "" for no hint. Longer than 23 chars is INVALID_ARGUMENT rather than being
+  /// silently truncated into a different mood.
+  external ffi.Pointer<ffi.Char> mode_hint;
+
+  /// Spec §4.1 dimensions, each in [0,1]. Out of range is INVALID_ARGUMENT.
+  @ffi.Double()
+  external double arousal;
+
+  @ffi.Double()
+  external double valence;
+
+  @ffi.Double()
+  external double cognitive_load;
+
+  @ffi.Double()
+  external double readiness;
+
+  /// Applied to all four dimensions, in [0,1]. Use 1.0 for a manual pin.
+  @ffi.Double()
+  external double confidence;
+}
 
 const int PRISM_ABI_VERSION_MAJOR = 0;
 
-const int PRISM_ABI_VERSION_MINOR = 1;
+const int PRISM_ABI_VERSION_MINOR = 2;
 
 const int PRISM_ABI_VERSION_PATCH = 0;

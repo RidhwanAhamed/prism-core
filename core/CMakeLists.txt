@@ -30,6 +30,10 @@ if(PRISM_BUILD_SHARED)
     prism::psv
     miniaudio)
   set_target_properties(prism_core_shared PROPERTIES OUTPUT_NAME prism_core)
+  # Turns PRISM_API into __declspec(dllexport) on Windows. Without it MinGW auto-exports
+  # every symbol in the binary (1251, including prism::pce internals); with it the DLL's
+  # surface is exactly the public header.
+  target_compile_definitions(prism_core_shared PRIVATE PRISM_CORE_BUILD_SHARED)
   if(IOS)
     # Ship as a dynamic framework: embedded frameworks are signed by the app build, and
     # dart:ffi opens 'prism_core.framework/prism_core' by rpath.

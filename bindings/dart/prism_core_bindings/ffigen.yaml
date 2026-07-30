@@ -4,6 +4,13 @@
 name: PrismCoreBindings
 description: Generated from the Prism Engine core C ABI. DO NOT EDIT by hand.
 output: lib/src/prism_core_bindings.g.dart
+# Where to find libclang. ffigen searches a built-in list of standard locations first and
+# only consults these, in order, if that fails — so adding a path here cannot break a
+# machine where the default lookup already works (macOS Xcode, Linux /usr/lib/llvm-*).
+# MSYS2's prefix is not on ffigen's list, which is the one Windows dev boxes here use.
+llvm-path:
+  - C:/Program Files/LLVM
+  - D:/ANP/tools/msys64/ucrt64
 headers:
   entry-points:
     - ../../../include/prism/prism_core.h
@@ -16,6 +23,23 @@ structs:
   include:
     - prism_.*
 enums:
+  include:
+    - prism_.*
+# Without these the generated file absorbs whatever the HOST's system headers define —
+# regenerating on macOS committed __mbstate_t and __sig; regenerating on Windows replaced
+# them with __MINGW64_VERSION_*. Same ABI, different file, purely because of who ran it.
+# Filtering every category to the prism surface makes the output platform-independent, so
+# a regeneration diff shows real ABI changes and nothing else.
+macros:
+  include:
+    - PRISM_.*
+typedefs:
+  include:
+    - prism_.*
+globals:
+  include:
+    - prism_.*
+unions:
   include:
     - prism_.*
 silence-enum-warning: true

@@ -37,12 +37,23 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Export annotation: when the core is built as a shared library, ONLY prism_* symbols
- * are visible (internal targets compile with hidden visibility). Windows dllexport/
- * dllimport plumbing lands with the first Windows target. */
+/* Export annotation: when the core is built as a shared library, ONLY prism_* symbols are
+ * visible (internal targets compile with hidden visibility).
+ *
+ * The Windows arms are load-bearing, not boilerplate. Left empty, a MinGW shared build
+ * falls back to auto-exporting EVERY symbol — measured at 1251, including mangled
+ * prism::pce internals. Marking the public functions explicitly both produces a correct
+ * import library and switches auto-export off, so the DLL's surface is exactly this
+ * header. Hosts that link against the DLL define PRISM_CORE_USE_SHARED. */
 #ifndef PRISM_API
 #if defined(_WIN32)
+#if defined(PRISM_CORE_BUILD_SHARED)
+#define PRISM_API __declspec(dllexport)
+#elif defined(PRISM_CORE_USE_SHARED)
+#define PRISM_API __declspec(dllimport)
+#else
 #define PRISM_API
+#endif
 #else
 #define PRISM_API __attribute__((visibility("default")))
 #endif

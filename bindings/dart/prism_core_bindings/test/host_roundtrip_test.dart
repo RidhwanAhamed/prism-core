@@ -1,18 +1,24 @@
-@TestOn('mac-os')
+@TestOn('vm')
 library;
 
-// Device-free validation of the Dart bindings against the REAL native core (the macOS
-// dylib), exercising the same code paths the Android app uses: create → loadScene →
-// start → ingress → PSV read-out → pull render → restart → dispose.
+// Device-free validation of the Dart bindings against the REAL native core, exercising
+// the same code paths the app uses: create → loadScene → start → ingress → PSV read-out
+// → pull render → restart → dispose.
 //
-// Run from this directory:
-//   PRISM_CORE_LIB=$REPO/build/debug/core/libprism_core.dylib \
+// Runs on any desktop host, not just macOS: nothing here is platform-specific once
+// PRISM_CORE_LIB names a loadable library, and pinning it to mac-os meant a Windows dev
+// box silently reported "No tests ran" instead of validating the binding it had just
+// regenerated.
+//
+// Run from this directory (adjust the extension per platform — .dll / .dylib / .so):
+//   PRISM_CORE_LIB=$REPO/build/shared/core/libprism_core.dll \
 //   PRISM_SCENES=$REPO/assets/scenes.json dart test
 
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:prism_core_bindings/prism_core_bindings.dart';
+import 'package:prism_core_bindings/src/prism_core_bindings.g.dart' as raw;
 import 'package:test/test.dart';
 
 void main() {
@@ -29,7 +35,12 @@ void main() {
     final core = PrismCore.create(checkIntervalMs: 25, cadenceMs: 100);
     addTearDown(core.dispose);
 
-    expect(core.version, '0.1.0');
+    // Built from the generated macros rather than a literal: the point of the assertion
+    // is that the LOADED library matches the header these bindings were generated from,
+    // which is exactly the mismatch that breaks an FFI host. A hardcoded string instead
+    // fails on every legitimate version bump and says nothing about agreement.
+    expect(core.version,
+        '${raw.PRISM_ABI_VERSION_MAJOR}.${raw.PRISM_ABI_VERSION_MINOR}.${raw.PRISM_ABI_VERSION_PATCH}');
     expect(core.psv, isNull); // nothing emitted before start
     expect(() => core.start(), throwsA(isA<PrismException>())); // scene first
 
@@ -86,5 +97,76 @@ void main() {
     // A negative-length cast must surface as an error code, not kill the process.
     expect(() => core.reportTaskDeadlines(List.generate(5000, (_) => TaskDeadline(dueMs: now))),
         throwsA(isA<PrismException>()));
+  });
+
+  test('a pinned mood reaches the audio and takeover silences it', () async {
+    final core = PrismCore.create(checkIntervalMs: 25, cadenceMs: 50);
+    addTearDown(core.dispose);
+    core.loadScene(scenes);
+    core.start();
+
+    // Every mood the app can send must resolve; a typo'd id must not silently become a
+    // default, because a silent default is a room playing the wrong thing.
+    for (final m in VenueMood.all) {
+      expect(VenueMood.byId(m.id), same(m));
+    }
+    expect(VenueMood.byId('not-a-mood'), isNull);
+
+    core.setMoodOverride(VenueMood.peak);
+    final pinned = core.psv!;
+    expect(pinned.arousal, VenueMood.peak.arousal);
+    expect(pinned.modeHint, 'venue_peak');
+
+    // Render a mood and return the settled audio. This is the assertion that actually
+    // matters: a mood must reach the AUDIO, not merely change the vector.
+    List<double> renderOf(VenueMood m) {
+      core.setMoodOverride(m);
+      final rate = core.sampleRate;
+      final out = <double>[];
+      // Skip ~2 s so the master fade-in and the smoothed parameter ramps have settled;
+      // measuring earlier reads the ramp rather than the mood. Both moods are captured
+      // at the same offset into the same loop, so the comparison below is like-for-like.
+      for (var done = 0; done < rate * 4; done += 512) {
+        final block = core.render(512);
+        if (done >= rate * 2) out.addAll(block);
+      }
+      return out;
+    }
+
+    double rms(Iterable<double> xs) {
+      var sum = 0.0;
+      var n = 0;
+      for (final x in xs) {
+        sum += x * x;
+        n++;
+      }
+      return n == 0 ? 0.0 : math.sqrt(sum / n);
+    }
+
+    final quiet = renderOf(VenueMood.windDown);
+    final loud = renderOf(VenueMood.peak);
+
+    // Compare the WAVEFORMS, not their loudness. With a single scene loaded, both moods
+    // draw on the same stems, and RMS alone is a poor discriminator: wind-down's low
+    // readiness drives the sub gain to 0.68 against peak's 0.45, and the sub is the
+    // loudest stem here — so the two land within ~2.6 dB even though peak opens five
+    // layers and wind-down opens two. The level separation seen when auditioning the six
+    // moods comes substantially from their different stem sets, not from the PSV alone.
+    //
+    // What must hold regardless of material is that changing the mood changes the sound.
+    final n = math.min(quiet.length, loud.length);
+    final diff = List<double>.generate(n, (i) => loud[i] - quiet[i]);
+    expect(rms(diff), greaterThan(rms(quiet) * 0.5),
+        reason: 'the two moods rendered near-identical audio — the override did not '
+            'reach the audio path');
+
+    // Clearing hands control back to the context engine.
+    core.clearMoodOverride();
+    core.clearMoodOverride(); // idempotent
+
+    // Takeover: the engine goes silent so staff can use their own source. Idempotent so
+    // a double-tap or a retry cannot throw in the app.
+    core.deviceStop();
+    core.deviceStop();
   });
 }

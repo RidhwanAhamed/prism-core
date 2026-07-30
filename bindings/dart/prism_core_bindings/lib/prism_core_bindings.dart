@@ -69,6 +69,79 @@ class PrismException implements Exception {
   String toString() => 'PrismException($operation: ${result.name})';
 }
 
+/// A named venue mood: a point in PSV space plus the hint naming it.
+///
+/// These are DERIVED from the engine's own mapping (pgae/src/mapping.cpp), not dialled by
+/// ear, because that mapping is what decides whether two moods differ at all. Density
+/// gates which stems open (pulse ≥ 0.35, air ≥ 0.55, lead ≥ 0.72), brightness drives the
+/// master low-pass, and the sub gain moves on readiness independently of arousal. Each
+/// preset lands on a deliberate side of those gates, so the moods differ in how many
+/// layers play — not merely in volume.
+///
+/// [valence] is carried for completeness but is inert in v1 (PGAE §11).
+///
+/// The [id] values match the mood ids the Prism Venues app and backend already use, so a
+/// mood coming off the API maps straight through [byId].
+class VenueMood {
+  const VenueMood._(this.id, this.modeHint, this.arousal, this.valence, this.cognitiveLoad,
+      this.readiness);
+
+  final String id;
+  final String modeHint;
+  final double arousal;
+  final double valence;
+  final double cognitiveLoad;
+  final double readiness;
+
+  /// Sparse and dark — bed and sub only, the "duo texture" the mood spec asks for, with
+  /// low readiness lifting the sub into a drone.
+  static const windDown =
+      VenueMood._('wind-down', 'venue_wind_down', 0.12, 0.40, 0.50, 0.20);
+
+  /// Equally sparse but the opposite character: low load lets the air layer through and
+  /// keeps the filter up, high readiness keeps the bottom light.
+  static const morningCalm =
+      VenueMood._('morning-calm', 'venue_morning_calm', 0.32, 0.70, 0.22, 0.62);
+
+  /// Just past the pulse gate — the groove is present without being forward.
+  static const daytimeFlow =
+      VenueMood._('daytime-flow', 'venue_daytime_flow', 0.52, 0.65, 0.42, 0.50);
+
+  /// Just past the lead gate, with load held high enough to keep the filter down: all
+  /// five layers, rich rather than bright, and a deep bottom from low readiness.
+  static const eveningWarmth =
+      VenueMood._('evening-warmth', 'venue_evening_warmth', 0.62, 0.60, 0.38, 0.35);
+
+  /// A step up, not a peak: brighter and more forward than daytime, lead still shut.
+  static const afternoonLift =
+      VenueMood._('afternoon-lift', 'venue_afternoon_lift', 0.70, 0.72, 0.40, 0.55);
+
+  /// Everything open, filter wide, pulse loudest of the six.
+  static const peak = VenueMood._('peak', 'venue_peak', 0.92, 0.70, 0.35, 0.58);
+
+  /// In the order a day runs, which is also sparsest to densest.
+  static const all = <VenueMood>[
+    morningCalm,
+    daytimeFlow,
+    afternoonLift,
+    eveningWarmth,
+    peak,
+    windDown,
+  ];
+
+  /// Looks up a mood by the id the app and backend use. Null for an unknown id — callers
+  /// decide whether to fall back or surface it, rather than getting a silent default.
+  static VenueMood? byId(String id) {
+    for (final m in all) {
+      if (m.id == id) return m;
+    }
+    return null;
+  }
+
+  @override
+  String toString() => 'VenueMood($id)';
+}
+
 /// One engine instance behind the opaque handle. Not thread-safe against itself for
 /// lifecycle calls — same contract as the C header. Use from the main isolate; the
 /// engine runs its own native inference thread and (with [deviceStart]) audio thread.
@@ -120,6 +193,11 @@ class PrismCore {
       }
     }
     if (Platform.isMacOS) return ffi.DynamicLibrary.open('libprism_core.dylib');
+    // Desktop hosts. Windows is where the venues app is developed before it reaches a
+    // Mac, and Linux is the Prism Venues embedded target; both load a plain shared
+    // object next to the executable.
+    if (Platform.isWindows) return ffi.DynamicLibrary.open('prism_core.dll');
+    if (Platform.isLinux) return ffi.DynamicLibrary.open('libprism_core.so');
     throw UnsupportedError('no prism_core library location for this platform');
   }
 
@@ -205,7 +283,41 @@ class PrismCore {
 
   int get sampleRate => _b.prism_sample_rate(_core);
 
+  /// Pins the PSV so the engine holds one mood until [clearMoodOverride].
+  ///
+  /// Takes effect immediately — the vector is published before this returns, so a tap is
+  /// heard without waiting out the inference cadence. The engine ramps into it; nothing
+  /// steps.
+  ///
+  /// [confidence] defaults to 1.0 and should stay there for a manual choice. Consumers
+  /// blend toward neutral as confidence falls (PSV spec §8.1), so a mood pinned at low
+  /// confidence is pulled back to the middle and barely changes the sound.
+  void setMoodOverride(VenueMood mood, {double confidence = 1.0}) {
+    final o = calloc<raw.prism_mood_override>();
+    final hint = mood.modeHint.toNativeUtf8();
+    try {
+      o.ref.mode_hint = hint.cast();
+      o.ref.arousal = mood.arousal;
+      o.ref.valence = mood.valence;
+      o.ref.cognitive_load = mood.cognitiveLoad;
+      o.ref.readiness = mood.readiness;
+      o.ref.confidence = confidence;
+      _check(_b.prism_set_mood_override(_core, o), 'prism_set_mood_override');
+    } finally {
+      calloc.free(hint);
+      calloc.free(o);
+    }
+  }
+
+  /// Hands control back to the context engine, which resumes at its next tick. The
+  /// pinned mood stays audible until then rather than dropping to neutral. Idempotent.
+  void clearMoodOverride() =>
+      _check(_b.prism_clear_mood_override(_core), 'prism_clear_mood_override');
+
   void deviceStart() => _check(_b.prism_device_start(_core), 'prism_device_start');
+
+  /// Stops the built-in device. This is what Takeover calls: the engine goes silent so
+  /// venue staff can drive the speakers from their own source. Idempotent.
   void deviceStop() => _check(_b.prism_device_stop(_core), 'prism_device_stop');
 
   /// Pull-model render (host tests / custom audio hosts). NOT for the UI isolate while
