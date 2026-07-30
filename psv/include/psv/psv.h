@@ -42,6 +42,16 @@ inline constexpr const char* kWindDown = "wind_down";
 inline constexpr const char* kVenueEnergize = "venue_energize";
 inline constexpr const char* kVenueSustain = "venue_sustain";
 inline constexpr const char* kVenueSettle = "venue_settle";
+// The three above name a DIRECTION of travel (lift, hold, settle). Prism Venues
+// also lets a manager pin one of six named operating moods outright, so those
+// need hints of their own — a direction cannot express "evening warmth". Purely
+// additive per spec §10; every one fits RtStateVector::mode_hint[24].
+inline constexpr const char* kVenueMorningCalm = "venue_morning_calm";
+inline constexpr const char* kVenueDaytimeFlow = "venue_daytime_flow";
+inline constexpr const char* kVenueAfternoonLift = "venue_afternoon_lift";
+inline constexpr const char* kVenueEveningWarmth = "venue_evening_warmth";
+inline constexpr const char* kVenuePeak = "venue_peak";
+inline constexpr const char* kVenueWindDown = "venue_wind_down";
 inline constexpr const char* kDriveFocus = "drive_focus";
 inline constexpr const char* kDriveEnergize = "drive_energize";
 inline constexpr const char* kDriveCalm = "drive_calm";

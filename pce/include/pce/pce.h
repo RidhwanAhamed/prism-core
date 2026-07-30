@@ -46,6 +46,13 @@ public:
   psv::StateVector start(int64_t now_ms);
   std::optional<psv::StateVector> evaluate(int64_t now_ms);
 
+  // Claim the next sequence number for a vector this PCE did not author — the host mood
+  // override publishes out of band, and the C ABI promises a strictly monotonic sequence
+  // that is safe to dedup by. Reserving here keeps the PCE the single owner of the
+  // counter, so a later emission can never hand back a number the host already used.
+  // Does not count as an emission: the cadence and last_psv_ are untouched.
+  int64_t reserve_sequence() { return ++seq_; }
+
 private:
   FusionInputs read_inputs(int64_t now_ms);
   bool significantly_changed(const psv::StateVector& candidate) const;

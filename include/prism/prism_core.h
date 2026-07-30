@@ -53,7 +53,7 @@ extern "C" {
 #endif
 
 #define PRISM_ABI_VERSION_MAJOR 0
-#define PRISM_ABI_VERSION_MINOR 1
+#define PRISM_ABI_VERSION_MINOR 2
 #define PRISM_ABI_VERSION_PATCH 0
 
 /* "MAJOR.MINOR.PATCH" of the linked library. Compare against the macros above. */
@@ -161,6 +161,51 @@ typedef struct prism_psv {
 /* Copy the most recently emitted PSV into *out. INVALID_STATE before prism_start (the
  * cold-start vector exists from start onward). Thread-safe. */
 PRISM_API prism_result prism_get_psv(prism_core* core, prism_psv* out);
+
+/* --- Host mood override ---------------------------------------------------------------
+ * Prism Venues puts a human in the loop: a manager taps one of six named moods and the
+ * room must follow. The PCE infers state, it does not take requests, so there was no way
+ * to express that. This pins the vector the audio engine consumes until it is cleared.
+ *
+ * It is NOT a volume or scene control. A mood is a point in PSV space, so a pinned mood
+ * reaches the audio the same way an inferred one does — through the §5 mapping. High
+ * arousal opens the density gates and raises the mapped level; low arousal leaves the
+ * scene sparse and quiet. Nothing bypasses the mapping, the smoothing, or the limiter,
+ * and no DSP constant moves.
+ *
+ * Confidence is explicit because it is load-bearing: every consumer blends toward
+ * neutral as confidence falls (spec §8.1), so an override published at low confidence
+ * would be pulled back to the middle and barely change the sound. A manual pin is a
+ * statement of fact about the room, so hosts should pass 1.0 unless they mean otherwise.
+ *
+ * The firewall is untouched: this sets the PSV the PCE would have emitted, at the same
+ * publish point, and the audio engine still sees nothing but a PSV. The render thread is
+ * untouched too — the override is applied on the control side, before the atomic handoff.
+ *
+ * While an override is set the PCE keeps running and its output keeps being discarded;
+ * clearing restores inferred state from the next tick. */
+typedef struct prism_mood_override {
+  /* NUL-terminated hint naming the mood, e.g. "venue_peak". Copied, not retained; may be
+   * NULL or "" for no hint. Longer than 23 chars is INVALID_ARGUMENT rather than being
+   * silently truncated into a different mood. */
+  const char* mode_hint;
+  /* Spec §4.1 dimensions, each in [0,1]. Out of range is INVALID_ARGUMENT. */
+  double arousal, valence, cognitive_load, readiness;
+  /* Applied to all four dimensions, in [0,1]. Use 1.0 for a manual pin. */
+  double confidence;
+} prism_mood_override;
+
+/* Pin the PSV. Takes effect immediately — the vector is published on return, so the mood
+ * starts moving without waiting for the next inference tick. Ramped by the engine like
+ * any other PSV change; nothing steps. Calling again replaces the current override.
+ * Valid before prism_start (the pinned vector then replaces the cold-start neutral one).
+ * Thread-safe. */
+PRISM_API prism_result prism_set_mood_override(prism_core* core,
+                                               const prism_mood_override* override_in);
+
+/* Release the pin and hand control back to the PCE, which resumes at its next tick.
+ * Idempotent: clearing when nothing is pinned succeeds and does nothing. Thread-safe. */
+PRISM_API prism_result prism_clear_mood_override(prism_core* core);
 
 /* --- Audio out ------------------------------------------------------------------------
  * Two ways to get sound, mutually exclusive per handle:

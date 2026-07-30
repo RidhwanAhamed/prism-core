@@ -169,3 +169,110 @@ TEST(PrismAbi, PullModelRenderProducesBoundedAudio) {
 
   prism_destroy(core);
 }
+
+TEST(PrismAbi, MoodOverrideIsValidated) {
+  prism_core* core = nullptr;
+  ASSERT_EQ(prism_create(nullptr, &core), PRISM_OK);
+
+  prism_mood_override o{};
+  o.mode_hint = "venue_peak";
+  o.arousal = 0.9;
+  o.valence = 0.7;
+  o.cognitive_load = 0.3;
+  o.readiness = 0.6;
+  o.confidence = 1.0;
+
+  EXPECT_EQ(prism_set_mood_override(nullptr, &o), PRISM_ERROR_INVALID_ARGUMENT);
+  EXPECT_EQ(prism_set_mood_override(core, nullptr), PRISM_ERROR_INVALID_ARGUMENT);
+
+  // Every dimension is bounded [0,1] (spec §4.1); so is confidence.
+  for (double* field : {&o.arousal, &o.valence, &o.cognitive_load, &o.readiness, &o.confidence}) {
+    const double good = *field;
+    *field = 1.5;
+    EXPECT_EQ(prism_set_mood_override(core, &o), PRISM_ERROR_INVALID_ARGUMENT);
+    *field = -0.1;
+    EXPECT_EQ(prism_set_mood_override(core, &o), PRISM_ERROR_INVALID_ARGUMENT);
+    *field = good;
+  }
+
+  // A hint too long to survive the fixed-width RT snapshot is rejected, not truncated:
+  // a clipped hint would silently name a different mood downstream.
+  o.mode_hint = "venue_a_mood_name_far_too_long_to_fit";
+  EXPECT_EQ(prism_set_mood_override(core, &o), PRISM_ERROR_INVALID_ARGUMENT);
+
+  o.mode_hint = nullptr; // no hint is legal
+  EXPECT_EQ(prism_set_mood_override(core, &o), PRISM_OK);
+
+  EXPECT_EQ(prism_clear_mood_override(nullptr), PRISM_ERROR_INVALID_ARGUMENT);
+  EXPECT_EQ(prism_clear_mood_override(core), PRISM_OK);
+  EXPECT_EQ(prism_clear_mood_override(core), PRISM_OK); // idempotent
+
+  prism_destroy(core);
+}
+
+TEST(PrismAbi, MoodOverridePinsThePsvAndSurvivesInferenceTicks) {
+  prism_config config = prism_config_default();
+  config.vertical = PRISM_VERTICAL_VENUES;
+  config.check_interval_ms = 25;
+  config.cadence_ms = 50; // tick fast, so an un-pinned vector would overwrite quickly
+
+  prism_core* core = nullptr;
+  ASSERT_EQ(prism_create(&config, &core), PRISM_OK);
+  ASSERT_EQ(prism_load_scene(core, scenes_path()), PRISM_OK);
+  ASSERT_EQ(prism_start(core), PRISM_OK);
+
+  prism_psv cold{};
+  ASSERT_EQ(prism_get_psv(core, &cold), PRISM_OK);
+  EXPECT_DOUBLE_EQ(cold.arousal, 0.5); // cold start is neutral (spec §6)
+
+  prism_mood_override peak{};
+  peak.mode_hint = "venue_peak";
+  peak.arousal = 0.9;
+  peak.valence = 0.75;
+  peak.cognitive_load = 0.2;
+  peak.readiness = 0.6;
+  peak.confidence = 1.0;
+  ASSERT_EQ(prism_set_mood_override(core, &peak), PRISM_OK);
+
+  // Published synchronously: the mood is readable the instant the call returns, without
+  // waiting out the inference cadence. A tap has to be heard now, not in five seconds.
+  prism_psv pinned{};
+  ASSERT_EQ(prism_get_psv(core, &pinned), PRISM_OK);
+  EXPECT_DOUBLE_EQ(pinned.arousal, 0.9);
+  EXPECT_DOUBLE_EQ(pinned.arousal_confidence, 1.0);
+  EXPECT_STREQ(pinned.mode_hint, "venue_peak");
+  EXPECT_GT(pinned.sequence, cold.sequence); // the counter still only moves forward
+
+  // Several inference ticks pass; the PCE keeps evaluating and its output keeps being
+  // discarded while the pin holds.
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  prism_psv still{};
+  ASSERT_EQ(prism_get_psv(core, &still), PRISM_OK);
+  EXPECT_DOUBLE_EQ(still.arousal, 0.9);
+  EXPECT_STREQ(still.mode_hint, "venue_peak");
+
+  // Distinct moods must reach the vector distinctly — this is what makes six moods sound
+  // like six moods rather than six labels on the same sound.
+  prism_mood_override wind_down{};
+  wind_down.mode_hint = "venue_wind_down";
+  wind_down.arousal = 0.12;
+  wind_down.valence = 0.45;
+  wind_down.cognitive_load = 0.15;
+  wind_down.readiness = 0.3;
+  wind_down.confidence = 1.0;
+  ASSERT_EQ(prism_set_mood_override(core, &wind_down), PRISM_OK);
+
+  prism_psv quiet{};
+  ASSERT_EQ(prism_get_psv(core, &quiet), PRISM_OK);
+  EXPECT_DOUBLE_EQ(quiet.arousal, 0.12);
+  EXPECT_STREQ(quiet.mode_hint, "venue_wind_down");
+  EXPECT_GT(quiet.sequence, pinned.sequence);
+
+  // Clearing hands control back: the PCE's next emission replaces the pinned vector.
+  ASSERT_EQ(prism_clear_mood_override(core), PRISM_OK);
+  EXPECT_TRUE(wait_for_psv(
+      core, [](const prism_psv& p) { return p.arousal != 0.12 || p.mode_hint[0] == '\0'; }, 2000))
+      << "the PCE never regained control after the override was cleared";
+
+  prism_destroy(core);
+}

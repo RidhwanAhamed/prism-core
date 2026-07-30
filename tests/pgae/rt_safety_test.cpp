@@ -36,6 +36,16 @@ void count_if_audited() {
 }
 } // namespace
 
+// GCC 16 pairs the std::free below against the operator new above and reports
+// -Wmismatched-new-delete. That analysis is for ordinary call sites; here these ARE the
+// global replacement operators, and [new.delete] requires exactly this pairing — malloc
+// in the replacement new, free in the replacement delete. Scoped to this TU, which
+// exists only to count allocations.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
+
 void* operator new(std::size_t size) {
   count_if_audited();
   if (void* p = std::malloc(size)) {
@@ -88,6 +98,10 @@ void operator delete(void* p, std::align_val_t) noexcept {
 void operator delete[](void* p, std::align_val_t align) noexcept {
   ::operator delete(p, align);
 }
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 namespace {
 

@@ -89,6 +89,12 @@ struct prism_core {
   prism::psv::RtStateVector ui_psv{};
   bool has_ui_psv = false;
 
+  // Host-pinned mood. Guarded by its own mutex: it is written from host threads and read
+  // on the inference thread at publish time. Deliberately NOT on the render path — the
+  // audio thread still reads only the lock-free RtExchange.
+  std::mutex override_mutex;
+  std::optional<prism::psv::StateVector> mood_override;
+
   bool scene_loaded = false;
   std::atomic<bool> running{false};
   std::thread inference;
@@ -105,7 +111,26 @@ PrismRt& prism_core_rt(prism_core& core) {
 
 namespace {
 
-void publish_psv(prism_core& core, const prism::psv::StateVector& v) {
+// Substitute the pinned mood, if one is set. The PCE's identity fields are kept — the
+// override changes what the room should feel like, not when the vector was emitted, and
+// prism_get_psv promises a strictly monotonic sequence regardless of who authored the
+// vector. Called from publish_psv only, so every path to the audio engine goes through it.
+prism::psv::StateVector with_override(prism_core& core, prism::psv::StateVector v) {
+  std::lock_guard<std::mutex> lock(core.override_mutex);
+  if (!core.mood_override) {
+    return v;
+  }
+  const prism::psv::StateVector& o = *core.mood_override;
+  v.mode_hint = o.mode_hint;
+  v.arousal = o.arousal;
+  v.valence = o.valence;
+  v.cognitive_load = o.cognitive_load;
+  v.readiness = o.readiness;
+  return v;
+}
+
+void publish_psv(prism_core& core, const prism::psv::StateVector& in) {
+  const prism::psv::StateVector v = with_override(core, in);
   const prism::psv::RtStateVector rt = prism::psv::to_rt(v);
   core.rt.exchange.publish(rt);
   std::lock_guard<std::mutex> lock(core.ui_mutex);
@@ -148,7 +173,7 @@ void device_callback(ma_device* device, void* output, const void* input, ma_uint
 extern "C" {
 
 const char* prism_version(void) {
-  return "0.1.0";
+  return "0.2.0"; // MINOR bump: prism_set/clear_mood_override added, nothing broken
 }
 
 const char* prism_result_description(prism_result result) {
@@ -366,6 +391,70 @@ prism_result prism_get_psv(prism_core* core, prism_psv* out) {
     return PRISM_ERROR_INVALID_STATE; // nothing emitted before prism_start
   }
   *out = to_abi_psv(core->ui_psv);
+  return PRISM_OK;
+}
+
+prism_result prism_set_mood_override(prism_core* core, const prism_mood_override* override_in) {
+  if (core == nullptr || override_in == nullptr) {
+    return PRISM_ERROR_INVALID_ARGUMENT;
+  }
+  const auto in_range = [](double x) { return x >= 0.0 && x <= 1.0; };
+  if (!in_range(override_in->arousal) || !in_range(override_in->valence) ||
+      !in_range(override_in->cognitive_load) || !in_range(override_in->readiness) ||
+      !in_range(override_in->confidence)) {
+    return PRISM_ERROR_INVALID_ARGUMENT;
+  }
+
+  std::string hint;
+  if (override_in->mode_hint != nullptr) {
+    hint = override_in->mode_hint;
+    // Reject rather than truncate: RtStateVector::mode_hint is a fixed 24 bytes, and a
+    // silently clipped hint would name a DIFFERENT mood downstream.
+    if (hint.size() >= sizeof(prism::psv::RtStateVector{}.mode_hint)) {
+      return PRISM_ERROR_INVALID_ARGUMENT;
+    }
+  }
+
+  try {
+    const double c = override_in->confidence;
+    prism::psv::StateVector pinned;
+    pinned.vertical = core->pce_options.vertical;
+    pinned.update_timestamp_ms = now_ms();
+    if (!hint.empty()) {
+      pinned.mode_hint = hint;
+    }
+    pinned.arousal = {override_in->arousal, c};
+    pinned.valence = {override_in->valence, c};
+    pinned.cognitive_load = {override_in->cognitive_load, c};
+    pinned.readiness = {override_in->readiness, c};
+
+    {
+      std::lock_guard<std::mutex> lock(core->override_mutex);
+      core->mood_override = pinned;
+    }
+
+    // Publish now so a tap is heard immediately instead of waiting out the inference
+    // cadence (5 s by default). The engine ramps into it like any other PSV change.
+    // pce_mutex is held across the sequence reservation AND the publish so a concurrent
+    // inference tick cannot interleave and land out of order.
+    std::lock_guard<std::mutex> lock(core->pce_mutex);
+    pinned.sequence = core->pce.reserve_sequence();
+    publish_psv(*core, pinned);
+    return PRISM_OK;
+  } catch (const std::bad_alloc&) {
+    return PRISM_ERROR_OUT_OF_MEMORY;
+  }
+}
+
+prism_result prism_clear_mood_override(prism_core* core) {
+  if (core == nullptr) {
+    return PRISM_ERROR_INVALID_ARGUMENT;
+  }
+  // The last pinned vector stays audible until the PCE's next tick replaces it. That is
+  // deliberate: publishing a neutral vector here would drop the room to a dead middle
+  // state for up to one cadence, which is worse than holding the mood a moment longer.
+  std::lock_guard<std::mutex> lock(core->override_mutex);
+  core->mood_override.reset();
   return PRISM_OK;
 }
 
