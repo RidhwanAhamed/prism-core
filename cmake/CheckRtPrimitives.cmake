@@ -39,8 +39,10 @@ if(NOT hdr_rc EQUAL 0)
 endif()
 
 # Parse "-MM" output ("target.o: dep dep \\\n dep ...") into repo-relative dep paths.
+# Only object-file targets are stripped: a bare "[^ \t\n]+:" also eats the "D:" of a
+# Windows drive-letter path, which drops every dep out of the closure.
 string(REPLACE "\\\n" " " all_deps "${tu_deps} ${hdr_deps}")
-string(REGEX REPLACE "[^ \t\n]+:" " " all_deps "${all_deps}")
+string(REGEX REPLACE "[^ \t\n]+\\.o(bj)?:" " " all_deps "${all_deps}")
 separate_arguments(dep_items UNIX_COMMAND "${all_deps}")
 
 set(audited "")

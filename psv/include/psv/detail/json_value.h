@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-// POSIX per-thread locales: number conversion must not follow the host's process locale
+// Per-thread locales: number conversion must not follow the host's process locale
 // (see json.cpp). Shared here because both the parser (strtod) and the emitter (snprintf)
 // need it.
 #include <locale.h>
@@ -21,6 +21,34 @@
 #endif
 
 namespace prism::psv::detail {
+
+#ifdef _WIN32
+
+// Windows has no uselocale/locale_t. The CRT equivalent is per-thread locale mode plus
+// setlocale, which affects only this thread once _ENABLE_PER_THREAD_LOCALE is set.
+class CLocaleScope {
+public:
+  CLocaleScope() : old_mode_(_configthreadlocale(_ENABLE_PER_THREAD_LOCALE)) {
+    if (const char* cur = setlocale(LC_ALL, nullptr)) {
+      old_ = cur;
+    }
+    setlocale(LC_ALL, "C");
+  }
+  ~CLocaleScope() {
+    setlocale(LC_ALL, old_.c_str());
+    if (old_mode_ != -1) {
+      _configthreadlocale(old_mode_);
+    }
+  }
+  CLocaleScope(const CLocaleScope&) = delete;
+  CLocaleScope& operator=(const CLocaleScope&) = delete;
+
+private:
+  int old_mode_;
+  std::string old_ = "C";
+};
+
+#else
 
 inline locale_t c_locale() {
   static locale_t loc = newlocale(LC_ALL_MASK, "C", static_cast<locale_t>(nullptr));
@@ -38,6 +66,8 @@ public:
 private:
   locale_t old_;
 };
+
+#endif
 
 struct JValue {
   enum class Type { Null, Bool, Number, String, Object, Array };

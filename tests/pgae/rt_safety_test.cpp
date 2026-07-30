@@ -11,6 +11,11 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+// Windows has no posix_memalign; the CRT pairs _aligned_malloc with _aligned_free.
+#include <malloc.h>
+#endif
+
 // Task 4 acceptance: "instrumentation shows zero allocations/locks in the render path
 // under a 10-minute run." This TU replaces the global allocation functions for the whole
 // test binary; a THREAD-LOCAL flag scopes counting to the render thread, so the writer
@@ -43,10 +48,17 @@ void* operator new[](std::size_t size) {
 }
 void* operator new(std::size_t size, std::align_val_t align) {
   count_if_audited();
+#ifdef _WIN32
+  void* p = _aligned_malloc(size, static_cast<std::size_t>(align));
+  if (p == nullptr) {
+    throw std::bad_alloc();
+  }
+#else
   void* p = nullptr;
   if (posix_memalign(&p, static_cast<std::size_t>(align), size) != 0) {
     throw std::bad_alloc();
   }
+#endif
   return p;
 }
 void* operator new[](std::size_t size, std::align_val_t align) {
@@ -67,7 +79,11 @@ void operator delete[](void* p, std::size_t) noexcept {
 }
 void operator delete(void* p, std::align_val_t) noexcept {
   count_if_audited();
+#ifdef _WIN32
+  _aligned_free(p);
+#else
   std::free(p);
+#endif
 }
 void operator delete[](void* p, std::align_val_t align) noexcept {
   ::operator delete(p, align);

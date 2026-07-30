@@ -34,7 +34,14 @@ int64_t now_ms() {
 }
 
 std::string dir_of(const std::string& path) {
+#ifdef _WIN32
+  // Windows hosts accept either separator, and a native caller will pass backslashes. A
+  // '/'-only split silently yields "." there, so stems resolve against the CWD instead of
+  // the manifest and the scene fails to load.
+  const auto slash = path.find_last_of("/\\");
+#else
   const auto slash = path.find_last_of('/');
+#endif
   return slash == std::string::npos ? std::string(".") : path.substr(0, slash);
 }
 

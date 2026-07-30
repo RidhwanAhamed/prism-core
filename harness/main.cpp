@@ -35,8 +35,16 @@ int64_t now_ms() {
 int32_t local_tz_offset_min() {
   const std::time_t now = std::time(nullptr);
   std::tm local{};
+#ifdef _WIN32
+  // No localtime_r/tm_gmtoff on Windows. Re-reading the local fields as if they were UTC
+  // yields (local − UTC) directly, and stays DST-correct because localtime_s applied it.
+  localtime_s(&local, &now);
+  const std::time_t as_utc = _mkgmtime(&local);
+  return static_cast<int32_t>(-(as_utc - now) / 60);
+#else
   localtime_r(&now, &local);
   return static_cast<int32_t>(-local.tm_gmtoff / 60);
+#endif
 }
 
 void sleep_or_stop(double seconds, const std::atomic<bool>& stop) {
