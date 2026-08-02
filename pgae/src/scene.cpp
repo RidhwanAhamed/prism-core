@@ -151,6 +151,19 @@ std::optional<SceneAssets> load_scene_assets(const SceneManifest& manifest,
     }
 
     std::vector<float>& frames = assets.stems[static_cast<size_t>(stem.role)];
+
+    // Size the buffer up front. The chunked insert below grows geometrically otherwise,
+    // and a vector that has doubled past its final size keeps the slack for its whole
+    // life — measured at ~36% over a scene. That was affordable while exactly one scene
+    // was ever resident; a crossfade holds two, so the waste doubles with it. A decoder
+    // that cannot report its length is not an error: reserve is a hint, and insert still
+    // does the right thing without it.
+    ma_uint64 total_frames = 0;
+    if (ma_decoder_get_length_in_pcm_frames(&decoder, &total_frames) == MA_SUCCESS &&
+        total_frames > 0) {
+      frames.reserve(static_cast<size_t>(total_frames));
+    }
+
     float chunk[4096];
     for (;;) {
       ma_uint64 frames_read = 0;
