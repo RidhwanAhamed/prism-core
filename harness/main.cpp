@@ -148,7 +148,47 @@ constexpr MoodPreset kMoods[] = {
 // captured and compared without an audio device in the loop. The 44-byte header is written
 // by hand deliberately: the harness must not gain a dependency just to prove a point, and
 // this keeps it consuming nothing but the C ABI.
-bool render_to_wav(prism_core* core, const char* path, long seconds) {
+// A mid-run scene change, as the app performs it on a mood tap.
+struct CrossfadePlan {
+  const char* scene_path = nullptr; // null = no swap
+  const MoodPreset* mood = nullptr; // pin this mood once the swap is armed
+  uint64_t at_frame = 0;
+  long ms = 0;
+  bool align = true;
+};
+
+// Arms the swap and pins the incoming mood. Pinning after the request rather than before
+// matters: the PSV is shared by both decks, so setting it first would audibly retarget the
+// OUTGOING scene before the new one is even resident.
+void request_crossfade(prism_core* core, const CrossfadePlan& plan) {
+  prism_scene_swap swap{};
+  swap.scenes_json_path = plan.scene_path;
+  swap.crossfade_ms = plan.ms;
+  swap.align_to_loop_boundary = plan.align ? 1 : 0;
+
+  const prism_result r = prism_crossfade_scene(core, &swap);
+  if (r != PRISM_OK) {
+    std::fprintf(stderr, "error: crossfade: %s\n", prism_result_description(r));
+    return;
+  }
+  std::printf("crossfade -> %s | %ld ms | %s\n", plan.scene_path,
+              plan.ms > 0 ? plan.ms : 1500,
+              plan.align ? "at the next loop boundary" : "immediately");
+
+  if (plan.mood != nullptr) {
+    prism_mood_override o{};
+    o.mode_hint = plan.mood->mode_hint;
+    o.arousal = plan.mood->arousal;
+    o.valence = plan.mood->valence;
+    o.cognitive_load = plan.mood->cognitive_load;
+    o.readiness = plan.mood->readiness;
+    o.confidence = 1.0;
+    prism_set_mood_override(core, &o);
+    std::printf("mood PINNED: %s (%s)\n", plan.mood->id, plan.mood->mode_hint);
+  }
+}
+
+bool render_to_wav(prism_core* core, const char* path, long seconds, const CrossfadePlan& plan) {
   const uint32_t rate = prism_sample_rate(core);
   if (rate == 0) {
     std::fprintf(stderr, "error: no scene loaded\n");
@@ -180,7 +220,15 @@ bool render_to_wav(prism_core* core, const char* path, long seconds) {
 
   constexpr uint32_t kBlock = 512;
   float block[kBlock];
+  bool swap_requested = false;
   for (uint32_t done = 0; done < total_frames; done += kBlock) {
+    // Ask for the scene change at its frame. In render mode this thread IS the clock, so
+    // the request lands at a reproducible sample offset — which is what makes the offline
+    // assertions on the output meaningful.
+    if (plan.scene_path != nullptr && !swap_requested && done >= plan.at_frame) {
+      swap_requested = true;
+      request_crossfade(core, plan);
+    }
     const uint32_t n = (total_frames - done) < kBlock ? (total_frames - done) : kBlock;
     if (prism_render(core, block, n) != PRISM_OK) {
       std::fprintf(stderr, "error: render failed\n");
@@ -208,6 +256,11 @@ int main(int argc, char** argv) {
   long run_seconds = 0; // 0 = until Enter
   const MoodPreset* mood = nullptr;
   const char* render_path = nullptr;
+  const char* crossfade_to = nullptr;
+  const MoodPreset* crossfade_mood = nullptr;
+  long crossfade_at_s = 0;
+  long crossfade_ms = 0;   // 0 = engine default
+  bool crossfade_align = true;
 
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--seconds") == 0 && i + 1 < argc) {
@@ -226,9 +279,36 @@ int main(int argc, char** argv) {
       }
     } else if (std::strcmp(argv[i], "--render") == 0 && i + 1 < argc) {
       render_path = argv[++i];
+    } else if (std::strcmp(argv[i], "--crossfade-to") == 0 && i + 1 < argc) {
+      crossfade_to = argv[++i];
+    } else if (std::strcmp(argv[i], "--crossfade-mood") == 0 && i + 1 < argc) {
+      crossfade_mood = find_mood(argv[++i]);
+      if (crossfade_mood == nullptr) {
+        std::fprintf(stderr, "error: unknown mood '%s'\n", argv[i]);
+        return 1;
+      }
+    } else if (std::strcmp(argv[i], "--crossfade-at") == 0 && i + 1 < argc) {
+      crossfade_at_s = std::strtol(argv[++i], nullptr, 10);
+    } else if (std::strcmp(argv[i], "--crossfade-ms") == 0 && i + 1 < argc) {
+      crossfade_ms = std::strtol(argv[++i], nullptr, 10);
+    } else if (std::strcmp(argv[i], "--no-align") == 0) {
+      crossfade_align = false;
     } else {
-      std::fprintf(stderr, "usage: prism_harness [--scene scenes.json] [--seconds N] "
-                           "[--mood ID] [--render out.wav]\n");
+      std::fprintf(stderr,
+                   "usage: prism_harness [--scene scenes.json] [--seconds N] [--mood ID]\n"
+                   "                     [--render out.wav]\n"
+                   "                     [--crossfade-to other.json [--crossfade-mood ID]\n"
+                   "                      --crossfade-at SECONDS [--crossfade-ms MS] "
+                   "[--no-align]]\n"
+                   "\n"
+                   "  --crossfade-to   swap to another scene mid-run, equal-power. This is\n"
+                   "                   what a mood change does in the app.\n"
+                   "  --crossfade-at   when to ask for it, in seconds from the start.\n"
+                   "  --crossfade-ms   overlap length; 0 uses the engine default (1500).\n"
+                   "  --no-align       start immediately instead of waiting for the outgoing\n"
+                   "                   scene's next loop boundary. Aligned is musically\n"
+                   "                   better but waits up to one loop (16 s for the venue\n"
+                   "                   stems), which looks like nothing happening.\n");
       return 1;
     }
   }
@@ -286,8 +366,16 @@ int main(int argc, char** argv) {
                 mood->readiness);
   }
 
+  CrossfadePlan plan;
+  plan.scene_path = crossfade_to;
+  plan.mood = crossfade_mood;
+  plan.ms = crossfade_ms;
+  plan.align = crossfade_align;
+  plan.at_frame =
+      static_cast<uint64_t>(crossfade_at_s) * static_cast<uint64_t>(prism_sample_rate(core));
+
   if (render_path != nullptr) {
-    const bool ok = render_to_wav(core, render_path, run_seconds > 0 ? run_seconds : 40);
+    const bool ok = render_to_wav(core, render_path, run_seconds > 0 ? run_seconds : 40, plan);
     prism_destroy(core);
     return ok ? 0 : 1;
   }
@@ -301,7 +389,14 @@ int main(int argc, char** argv) {
 
   if (run_seconds > 0) {
     std::printf("running for %ld second(s)...\n", run_seconds);
-    std::this_thread::sleep_for(std::chrono::seconds(run_seconds));
+    if (plan.scene_path != nullptr && crossfade_at_s < run_seconds) {
+      // Live mode: the device thread is the clock, so wait in wall time instead of frames.
+      std::this_thread::sleep_for(std::chrono::seconds(crossfade_at_s));
+      request_crossfade(core, plan);
+      std::this_thread::sleep_for(std::chrono::seconds(run_seconds - crossfade_at_s));
+    } else {
+      std::this_thread::sleep_for(std::chrono::seconds(run_seconds));
+    }
   } else {
     std::printf("press Enter to stop.\n");
     std::getchar();
