@@ -151,13 +151,17 @@ void inference_main(prism_core* core) {
     if (!core->running.load(std::memory_order_acquire)) {
       break;
     }
-    std::optional<prism::psv::StateVector> emitted;
+    // pce_mutex is held across evaluate AND publish. psv::Exchange is single-writer by
+    // contract, and prism_set_mood_override publishes from the host thread under this
+    // same lock — so releasing here and publishing outside would put two writers on the
+    // double buffer, tearing snapshots and letting a lower sequence land after a higher
+    // one. Still off the audio thread: the render path only ever reads the lock-free
+    // exchange, so this costs the control plane a mutex and the RT path nothing.
     {
       std::lock_guard<std::mutex> lock(core->pce_mutex);
-      emitted = core->pce.evaluate(now_ms());
-    }
-    if (emitted) {
-      publish_psv(*core, *emitted);
+      if (const std::optional<prism::psv::StateVector> emitted = core->pce.evaluate(now_ms())) {
+        publish_psv(*core, *emitted);
+      }
     }
   }
 }
