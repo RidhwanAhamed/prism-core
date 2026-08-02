@@ -138,7 +138,8 @@ psv::RtStateVector rt_psv(int64_t seq) {
 
 TEST(PgaeRtSafety, TenMinuteRenderRunAllocatesNothing) {
   pgae::Pgae engine;
-  ASSERT_TRUE(engine.load_scene(synthetic_assets())); // pre-allocation happens HERE
+  const pgae::SceneAssets assets = synthetic_assets();
+  ASSERT_TRUE(engine.load_scene(&assets)); // pre-allocation happens HERE
 
   psv::RtExchange exchange;
   std::atomic<bool> stop_writer{false};
@@ -182,4 +183,37 @@ TEST(PgaeRtSafety, TenMinuteRenderRunAllocatesNothing) {
       << "the render path allocated or freed memory";
   EXPECT_GE(rendered, kTenMinutes);
   EXPECT_GT(consumed, 100u) << "the handoff never delivered fresh snapshots";
+}
+
+TEST(PgaeRtSafety, SceneCrossfadeAllocatesNothingOnTheRenderPath) {
+  // The crossfade is the one feature that puts a SECOND scene under the render path, and
+  // the outgoing one has to go somewhere when the overlap ends. Releasing it on the audio
+  // thread would be a real-time rule 1 violation, and the instrumented operator delete
+  // above counts a release just as it counts an allocation — so retiring through
+  // RetiredScenes rather than destroying in place is what this test pins.
+  pgae::Pgae engine;
+  const pgae::SceneAssets from = synthetic_assets();
+  const pgae::SceneAssets to = synthetic_assets();
+  ASSERT_TRUE(engine.load_scene(&from));
+
+  constexpr uint32_t kBlock = 512;
+  std::vector<float> block(kBlock); // host-owned, allocated up front
+  for (int i = 0; i < 200; ++i) {
+    engine.render(block.data(), kBlock); // settle before arming
+  }
+
+  ASSERT_TRUE(engine.begin_crossfade(&to, kRate / 2, /*align=*/false));
+
+  const uint64_t allocs_before = g_rt_allocations.load();
+  t_rt_audit = true;
+  // Long enough to cover arming, the whole overlap, and the retirement at the end.
+  for (int i = 0; i < 400; ++i) {
+    engine.render(block.data(), kBlock);
+  }
+  t_rt_audit = false;
+
+  EXPECT_EQ(g_rt_allocations.load() - allocs_before, 0u)
+      << "the scene crossfade allocated or released memory on the render path";
+  EXPECT_FALSE(engine.crossfade_active()) << "the overlap never completed";
+  EXPECT_EQ(engine.collect_retired(), &from) << "the outgoing scene was not handed back";
 }

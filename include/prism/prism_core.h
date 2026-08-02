@@ -64,7 +64,7 @@ extern "C" {
 #endif
 
 #define PRISM_ABI_VERSION_MAJOR 0
-#define PRISM_ABI_VERSION_MINOR 2
+#define PRISM_ABI_VERSION_MINOR 3
 #define PRISM_ABI_VERSION_PATCH 0
 
 /* "MAJOR.MINOR.PATCH" of the linked library. Compare against the macros above. */
@@ -76,7 +76,8 @@ typedef enum prism_result {
   PRISM_ERROR_INVALID_STATE = 2,    /* call violates the lifecycle (see per-function docs) */
   PRISM_ERROR_IO = 3,               /* scene manifest or stem file unreadable/invalid */
   PRISM_ERROR_DEVICE = 4,           /* audio device could not be opened or started */
-  PRISM_ERROR_OUT_OF_MEMORY = 5
+  PRISM_ERROR_OUT_OF_MEMORY = 5,
+  PRISM_ERROR_BUSY = 6 /* a scene crossfade is already in flight */
 } prism_result;
 
 /* Static, human-readable description; never NULL. */
@@ -217,6 +218,50 @@ PRISM_API prism_result prism_set_mood_override(prism_core* core,
 /* Release the pin and hand control back to the PCE, which resumes at its next tick.
  * Idempotent: clearing when nothing is pinned succeeds and does nothing. Thread-safe. */
 PRISM_API prism_result prism_clear_mood_override(prism_core* core);
+
+/* --- Gapless scene change --------------------------------------------------------------
+ * prism_load_scene binds a scene to a handle for the handle's LIFE, and prism_stop does
+ * not release it. That is deliberate and unchanged: it is what lets the render path own
+ * fully decoded buffers and never touch disk.
+ *
+ * This is the other door. A mood is a different scene — a different set of stems — so
+ * moving between moods means holding two at once. The host decodes the incoming scene on
+ * its own thread and hands the engine an equal-power crossfade between the two. The
+ * outgoing scene is released on a CONTROL thread once the audio thread has finished with
+ * it, never on the render path. */
+typedef struct prism_scene_swap {
+  /* Manifest path, exactly as prism_load_scene takes it; stems resolve relative to it.
+   * Its sample rate must equal the loaded scene's — the device is already open at that
+   * rate and there is no resampler, so a mismatch is INVALID_ARGUMENT. */
+  const char* scenes_json_path;
+  /* Length of the equal-power overlap, in milliseconds. 0 selects the engine default
+   * (1500 ms). Clamped to [50, 120000]. This is the "how slowly it eases" control. */
+  int64_t crossfade_ms;
+  /* Non-zero: start the overlap at the outgoing scene's next loop boundary, so the
+   * material leaving is never cut mid-phrase. Musically the right default, but it costs
+   * up to one loop period of waiting before anything is audible — 16 s with the Venues
+   * stems, which is why the shortest transition setting should pass zero here and accept
+   * a start at the next block instead. */
+  int32_t align_to_loop_boundary;
+} prism_scene_swap;
+
+/* Control thread only, same class as prism_load_scene: it BLOCKS for the decode, because
+ * the file I/O has to happen somewhere and the render path is not allowed to do it. It
+ * returns as soon as the swap is armed; the crossfade itself runs on the audio thread.
+ *
+ * The armed command is consumed by whatever renders — prism_render or the built-in
+ * device — so a handle that is not rendering will hold it and keep reporting BUSY until
+ * it does. prism_stop drops any unconsumed swap.
+ *
+ *   PRISM_ERROR_INVALID_STATE     no scene loaded yet
+ *   PRISM_ERROR_BUSY              a crossfade is still in flight
+ *   PRISM_ERROR_INVALID_ARGUMENT  null argument, or the new scene's sample rate differs
+ *   PRISM_ERROR_IO / _OUT_OF_MEMORY  as prism_load_scene */
+PRISM_API prism_result prism_crossfade_scene(prism_core* core, const prism_scene_swap* swap);
+
+/* Non-zero while a crossfade is armed or running. Safe from any thread; one atomic load.
+ * Hosts use it to avoid asking for a mood change that would only come back BUSY. */
+PRISM_API int32_t prism_crossfade_active(const prism_core* core);
 
 /* --- Audio out ------------------------------------------------------------------------
  * Two ways to get sound, mutually exclusive per handle:

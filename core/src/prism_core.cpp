@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <new>
 #include <optional>
@@ -95,6 +96,31 @@ struct prism_core {
   std::mutex override_mutex;
   std::optional<prism::psv::StateVector> mood_override;
 
+  // Owns the decoded stems the render path reads. Deliberately on the control side, not
+  // in PrismRt: Pgae holds a non-owning pointer (see Pgae::load_scene), so releasing a
+  // scene is always a control-thread act and never a free on the render path.
+  //
+  // Two slots, because a crossfade overlaps two scenes: `scene_assets` is what the engine
+  // is playing, `incoming_assets` is the one fading in. When the engine hands the outgoing
+  // scene back, reclaim_retired_scene() promotes incoming to live and releases the old one
+  // — here, on a control thread, where releasing is legal.
+  std::unique_ptr<prism::pgae::SceneAssets> scene_assets;
+  std::unique_ptr<prism::pgae::SceneAssets> incoming_assets;
+
+  // Releases whatever the render path has finished with. Safe to call at any time from a
+  // control thread; does nothing when there is nothing to collect.
+  void reclaim_retired_scene() {
+    const prism::pgae::SceneAssets* retired = rt.pgae.collect_retired();
+    if (retired == nullptr) {
+      return;
+    }
+    if (scene_assets.get() == retired) {
+      scene_assets = std::move(incoming_assets); // the crossfade completed; old one dies here
+    } else if (incoming_assets.get() == retired) {
+      incoming_assets.reset(); // a swap that never became live
+    }
+  }
+
   bool scene_loaded = false;
   std::atomic<bool> running{false};
   std::thread inference;
@@ -138,6 +164,30 @@ void publish_psv(prism_core& core, const prism::psv::StateVector& in) {
   core.has_ui_psv = true;
 }
 
+// Reads a manifest and decodes every stem in its default scene. All the I/O and all the
+// allocation live here, on whichever control thread called in — which is exactly why the
+// render path never has to do either. Null on any failure; the caller maps that to IO.
+std::unique_ptr<prism::pgae::SceneAssets> decode_scene(const char* scenes_json_path) {
+  std::ifstream in(scenes_json_path);
+  if (!in.good()) {
+    return nullptr;
+  }
+  std::stringstream buffer;
+  buffer << in.rdbuf();
+
+  std::string error;
+  const auto manifest = prism::pgae::parse_scene_manifest(buffer.str(), &error);
+  if (!manifest) {
+    return nullptr;
+  }
+  auto assets = prism::pgae::load_scene_assets(*manifest, manifest->default_scene,
+                                               dir_of(scenes_json_path), &error);
+  if (!assets) {
+    return nullptr;
+  }
+  return std::make_unique<prism::pgae::SceneAssets>(std::move(*assets));
+}
+
 void inference_main(prism_core* core) {
   while (core->running.load(std::memory_order_acquire)) {
     // Sleep in short slices so prism_stop stays responsive.
@@ -151,6 +201,11 @@ void inference_main(prism_core* core) {
     if (!core->running.load(std::memory_order_acquire)) {
       break;
     }
+
+    // This thread is the routine collector for scenes the render path has retired. It
+    // wakes at least every 50 ms, so a completed crossfade's outgoing scene is released
+    // promptly rather than staying resident until the next mood change.
+    core->reclaim_retired_scene();
     // pce_mutex is held across evaluate AND publish. psv::Exchange is single-writer by
     // contract, and prism_set_mood_override publishes from the host thread under this
     // same lock — so releasing here and publishing outside would put two writers on the
@@ -177,7 +232,7 @@ void device_callback(ma_device* device, void* output, const void* input, ma_uint
 extern "C" {
 
 const char* prism_version(void) {
-  return "0.2.0"; // MINOR bump: prism_set/clear_mood_override added, nothing broken
+  return "0.3.0"; // MINOR bump: prism_crossfade_scene added, nothing broken
 }
 
 const char* prism_result_description(prism_result result) {
@@ -194,6 +249,8 @@ const char* prism_result_description(prism_result result) {
     return "audio device could not be opened or started";
   case PRISM_ERROR_OUT_OF_MEMORY:
     return "out of memory";
+  case PRISM_ERROR_BUSY:
+    return "a scene crossfade is already in flight";
   }
   return "unknown result";
 }
@@ -282,24 +339,13 @@ prism_result prism_load_scene(prism_core* core, const char* scenes_json_path) {
   // buffers can be large) maps to the documented OUT_OF_MEMORY; anything else on this
   // I/O path maps to IO.
   try {
-    std::ifstream in(scenes_json_path);
-    if (!in.good()) {
-      return PRISM_ERROR_IO;
-    }
-    std::stringstream buffer;
-    buffer << in.rdbuf();
-
-    std::string error;
-    const auto manifest = prism::pgae::parse_scene_manifest(buffer.str(), &error);
-    if (!manifest) {
-      return PRISM_ERROR_IO;
-    }
-    auto assets = prism::pgae::load_scene_assets(*manifest, manifest->default_scene,
-                                                 dir_of(scenes_json_path), &error);
+    auto assets = decode_scene(scenes_json_path);
     if (!assets) {
       return PRISM_ERROR_IO;
     }
-    if (!core->rt.pgae.load_scene(std::move(*assets), &error)) {
+    std::string error;
+    core->scene_assets = std::move(assets);
+    if (!core->rt.pgae.load_scene(core->scene_assets.get(), &error)) {
       return PRISM_ERROR_IO;
     }
     core->scene_loaded = true;
@@ -343,6 +389,16 @@ prism_result prism_stop(prism_core* core) {
       core->inference.join();
     }
   }
+
+  // Nothing renders now, so a swap that was armed but never consumed would occupy the
+  // mailbox forever and make every later crossfade report BUSY. Drop it, and collect
+  // anything the render path finished with on its way out.
+  if (const prism::pgae::SceneAssets* stranded = core->rt.pgae.abandon_pending_crossfade()) {
+    if (core->incoming_assets.get() == stranded) {
+      core->incoming_assets.reset();
+    }
+  }
+  core->reclaim_retired_scene();
   return PRISM_OK;
 }
 
@@ -448,6 +504,62 @@ prism_result prism_set_mood_override(prism_core* core, const prism_mood_override
   } catch (const std::bad_alloc&) {
     return PRISM_ERROR_OUT_OF_MEMORY;
   }
+}
+
+prism_result prism_crossfade_scene(prism_core* core, const prism_scene_swap* swap) {
+  if (core == nullptr || swap == nullptr || swap->scenes_json_path == nullptr) {
+    return PRISM_ERROR_INVALID_ARGUMENT;
+  }
+  if (!core->scene_loaded) {
+    return PRISM_ERROR_INVALID_STATE; // nothing to fade FROM
+  }
+
+  // Collect first. A host that renders in bursts may have completed the previous overlap
+  // without the inference thread having ticked since; without this it would see BUSY for
+  // a crossfade that is already finished.
+  core->reclaim_retired_scene();
+  if (core->rt.pgae.crossfade_active()) {
+    return PRISM_ERROR_BUSY;
+  }
+
+  try {
+    auto assets = decode_scene(swap->scenes_json_path);
+    if (!assets) {
+      return PRISM_ERROR_IO;
+    }
+    if (assets->sample_rate != core->rt.pgae.sample_rate()) {
+      return PRISM_ERROR_INVALID_ARGUMENT; // the device is already open at the old rate
+    }
+
+    // Clamp before converting: the header promises [50, 120000] ms, and a zero or absurd
+    // value must not reach the render path as a zero-length or effectively endless fade.
+    constexpr int64_t kDefaultMs = 1500;
+    constexpr int64_t kMinMs = 50;
+    constexpr int64_t kMaxMs = 120000;
+    int64_t ms = swap->crossfade_ms > 0 ? swap->crossfade_ms : kDefaultMs;
+    ms = ms < kMinMs ? kMinMs : (ms > kMaxMs ? kMaxMs : ms);
+    const uint64_t frames =
+        static_cast<uint64_t>(ms) * static_cast<uint64_t>(core->rt.pgae.sample_rate()) / 1000;
+
+    if (!core->rt.pgae.begin_crossfade(assets.get(), frames, swap->align_to_loop_boundary != 0)) {
+      return PRISM_ERROR_BUSY; // lost a race with another control thread; assets die here
+    }
+    // Accepted: the engine now holds a pointer into these buffers, so ownership has to
+    // outlive this call. It is released in reclaim_retired_scene once the overlap ends.
+    core->incoming_assets = std::move(assets);
+    return PRISM_OK;
+  } catch (const std::bad_alloc&) {
+    return PRISM_ERROR_OUT_OF_MEMORY;
+  } catch (...) {
+    return PRISM_ERROR_IO;
+  }
+}
+
+int32_t prism_crossfade_active(const prism_core* core) {
+  if (core == nullptr) {
+    return 0;
+  }
+  return core->rt.pgae.crossfade_active() ? 1 : 0;
 }
 
 prism_result prism_clear_mood_override(prism_core* core) {

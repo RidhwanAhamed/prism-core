@@ -276,3 +276,52 @@ TEST(PrismAbi, MoodOverridePinsThePsvAndSurvivesInferenceTicks) {
 
   prism_destroy(core);
 }
+
+TEST(PrismAbi, CrossfadeSceneLifecycle) {
+  // prism_load_scene stays one-per-handle; prism_crossfade_scene is the door that lets a
+  // host change mood without tearing the handle down. Exercised through the pull model, so
+  // no audio device is needed: prism_render is what consumes the armed swap.
+  prism_core* core = nullptr;
+  ASSERT_EQ(prism_create(nullptr, &core), PRISM_OK);
+
+  prism_scene_swap swap{};
+  swap.scenes_json_path = scenes_path();
+  swap.crossfade_ms = 200;
+  swap.align_to_loop_boundary = 0; // deterministic start; alignment is covered in pgae tests
+
+  // Nothing to fade from yet.
+  EXPECT_EQ(prism_crossfade_scene(core, &swap), PRISM_ERROR_INVALID_STATE);
+
+  ASSERT_EQ(prism_load_scene(core, scenes_path()), PRISM_OK);
+  ASSERT_EQ(prism_start(core), PRISM_OK);
+  EXPECT_EQ(prism_crossfade_active(core), 0);
+
+  // Argument validation.
+  EXPECT_EQ(prism_crossfade_scene(core, nullptr), PRISM_ERROR_INVALID_ARGUMENT);
+  EXPECT_EQ(prism_crossfade_scene(nullptr, &swap), PRISM_ERROR_INVALID_ARGUMENT);
+  prism_scene_swap missing = swap;
+  missing.scenes_json_path = "does/not/exist.json";
+  EXPECT_EQ(prism_crossfade_scene(core, &missing), PRISM_ERROR_IO);
+
+  ASSERT_EQ(prism_crossfade_scene(core, &swap), PRISM_OK);
+  EXPECT_EQ(prism_crossfade_active(core), 1);
+  // Refused while in flight, rather than silently dropping the first one.
+  EXPECT_EQ(prism_crossfade_scene(core, &swap), PRISM_ERROR_BUSY);
+
+  // Render past the overlap. Only the render path consumes the swap, so an engine that
+  // never renders would stay busy — that is documented, and this is the other half of it.
+  const uint32_t rate = prism_sample_rate(core);
+  ASSERT_GT(rate, 0u);
+  std::vector<float> block(512);
+  for (uint32_t rendered = 0; rendered < rate; rendered += 512) {
+    ASSERT_EQ(prism_render(core, block.data(), 512), PRISM_OK);
+  }
+  EXPECT_EQ(prism_crossfade_active(core), 0) << "the overlap never completed";
+
+  // And the handle is reusable for the next mood.
+  EXPECT_EQ(prism_crossfade_scene(core, &swap), PRISM_OK);
+
+  EXPECT_EQ(prism_stop(core), PRISM_OK); // drops the swap nothing will now consume
+  EXPECT_EQ(prism_crossfade_active(core), 0);
+  prism_destroy(core);
+}

@@ -54,14 +54,17 @@ std::vector<float> render_seconds(pgae::Pgae& engine, double seconds) {
 
 TEST(PgaeRender, StartsFromSilence) {
   pgae::Pgae engine;
-  ASSERT_TRUE(engine.load_scene(dc_assets(1.0F)));
+  // load_scene is non-owning, so the assets must outlive the engine's use of them.
+  const pgae::SceneAssets assets = dc_assets(1.0F);
+  ASSERT_TRUE(engine.load_scene(&assets));
   const auto out = render_seconds(engine, 0.01);
   EXPECT_NEAR(out[0], 0.0, 1e-4); // click-free master fade-in from zero
 }
 
 TEST(PgaeRender, LimiterCeilingIsNeverExceeded) {
   pgae::Pgae engine;
-  ASSERT_TRUE(engine.load_scene(dc_assets(1.0F)));
+  const pgae::SceneAssets assets = dc_assets(1.0F);
+  ASSERT_TRUE(engine.load_scene(&assets));
   // Hostile drive: maximum arousal, zero load, exhausted readiness → loud, dense mix.
   engine.consume_psv(make_psv(1, 1, 0, 1, 0, 1));
   const auto out = render_seconds(engine, 4.0);
@@ -75,7 +78,8 @@ TEST(PgaeRender, LimiterCeilingIsNeverExceeded) {
 
 TEST(PgaeRender, NoParameterSteps) {
   pgae::Pgae engine;
-  ASSERT_TRUE(engine.load_scene(dc_assets(0.3F)));
+  const pgae::SceneAssets assets = dc_assets(0.3F);
+  ASSERT_TRUE(engine.load_scene(&assets));
 
   std::vector<float> all;
   auto run = [&](double seconds) {
@@ -108,7 +112,7 @@ TEST(PgaeRender, CrossfadeWaitsForTheExactLoopBoundary) {
   assets.sample_rate = kRate;
   assets.stems[static_cast<size_t>(pgae::StemRole::Air)].assign(4'000, 1.0F);
   pgae::Pgae engine;
-  ASSERT_TRUE(engine.load_scene(std::move(assets)));
+  ASSERT_TRUE(engine.load_scene(&assets));
 
   std::vector<float> out(50'000);
   engine.render(out.data(), 44'100);                  // silent: air inactive, nothing else present
@@ -153,7 +157,7 @@ TEST(PgaeRender, CutoffGlidesInsteadOfStepping) {
                                                 static_cast<double>(i) / kRate));
   }
   pgae::Pgae engine;
-  ASSERT_TRUE(engine.load_scene(std::move(assets)));
+  ASSERT_TRUE(engine.load_scene(&assets));
 
   render_seconds(engine, 1.0); // settle master fade + filter at the initial 2400 Hz
   engine.consume_psv(make_psv(0.5, 0, 1, 1, 0.5, 0)); // brightness 0.15 → ~522 Hz target
@@ -169,9 +173,91 @@ TEST(PgaeRender, CutoffGlidesInsteadOfStepping) {
   EXPECT_GT(early, 2.5 * late) << "cutoff stepped instead of gliding";
 }
 
+TEST(PgaeRender, SceneCrossfadeArrivesWithoutStepping) {
+  // A mood change is a different SCENE, so the engine holds both and equal-power fades
+  // between them. The failure this pins is the one users reported: the old behaviour tore
+  // the scene down and built a new one, which is a gap, not a transition.
+  const pgae::SceneAssets from = dc_assets(0.2F);
+  const pgae::SceneAssets to = dc_assets(0.8F); // audibly louder, so arrival is observable
+  pgae::Pgae engine;
+  ASSERT_TRUE(engine.load_scene(&from));
+  const auto settled = render_seconds(engine, 2.0); // past the master fade-in
+  EXPECT_FALSE(engine.crossfade_active());
+
+  ASSERT_TRUE(engine.begin_crossfade(&to, kRate, /*align=*/false)); // 1 s overlap
+  EXPECT_TRUE(engine.crossfade_active());
+  const auto during = render_seconds(engine, 2.0);
+  EXPECT_FALSE(engine.crossfade_active()) << "overlap never completed";
+
+  // Continuity: DC stems mean every output change is a parameter change, so the same
+  // per-sample bound NoParameterSteps uses catches a scene swap that jumps.
+  double max_delta = std::fabs(static_cast<double>(during[0]) -
+                               static_cast<double>(settled.back()));
+  for (size_t i = 1; i < during.size(); ++i) {
+    max_delta = std::max(max_delta, static_cast<double>(std::fabs(during[i] - during[i - 1])));
+  }
+  EXPECT_LT(max_delta, 1e-3) << "the scene swap stepped instead of fading";
+
+  // Arrival: the louder scene is actually what is playing afterwards.
+  EXPECT_GT(std::fabs(during.back()), std::fabs(settled.back()) + 0.01);
+}
+
+TEST(PgaeRender, SceneCrossfadeRetiresTheOutgoingSceneForTheControlThread) {
+  // The render path may not release memory (real-time rule 1), so it hands the outgoing
+  // scene back instead. Nothing collected would mean a leak for every mood change.
+  const pgae::SceneAssets from = dc_assets(0.3F);
+  const pgae::SceneAssets to = dc_assets(0.5F);
+  pgae::Pgae engine;
+  ASSERT_TRUE(engine.load_scene(&from));
+  render_seconds(engine, 0.5);
+  EXPECT_EQ(engine.collect_retired(), nullptr); // nothing retired yet
+
+  ASSERT_TRUE(engine.begin_crossfade(&to, kRate / 4, /*align=*/false));
+  // Refused while one is in flight — the caller must keep owning its scene.
+  EXPECT_FALSE(engine.begin_crossfade(&from, kRate / 4, /*align=*/false));
+
+  render_seconds(engine, 1.0);
+  EXPECT_EQ(engine.collect_retired(), &from) << "outgoing scene never handed back";
+  EXPECT_EQ(engine.collect_retired(), nullptr) << "collected twice";
+  // And the slot is free again for the next mood.
+  EXPECT_TRUE(engine.begin_crossfade(&from, kRate / 4, /*align=*/false));
+}
+
+TEST(PgaeRender, SceneCrossfadeWaitsForTheBedLoopBoundaryWhenAligned) {
+  // Real-time rule 5: aligned swaps start where the outgoing bed completes a loop, so the
+  // material leaving is never cut mid-phrase.
+  pgae::SceneAssets from;
+  from.sample_rate = kRate;
+  from.stems[static_cast<size_t>(pgae::StemRole::Bed)].assign(4'000, 0.25F);
+  pgae::SceneAssets to;
+  to.sample_rate = kRate;
+  to.stems[static_cast<size_t>(pgae::StemRole::Bed)].assign(4'000, 0.75F);
+
+  pgae::Pgae engine;
+  ASSERT_TRUE(engine.load_scene(&from));
+  render_seconds(engine, 2.0); // settle the master fade-in and the level one-pole first,
+                               // or "flat before the boundary" is measuring the ramp
+  ASSERT_TRUE(engine.begin_crossfade(&to, 2'000, /*align=*/true));
+
+  // Phase is 88'200; the next 4'000-boundary is 92'000, i.e. 3'800 samples into this
+  // buffer. Nothing may move before that, then the 2'000-sample overlap runs.
+  std::vector<float> out(12'000);
+  engine.render(out.data(), 12'000);
+  constexpr size_t kBoundary = 3'800;
+
+  const double settled = std::fabs(static_cast<double>(out[0]));
+  for (size_t i = 0; i <= kBoundary; ++i) {
+    ASSERT_NEAR(std::fabs(static_cast<double>(out[i])), settled, 1e-4)
+        << "the overlap started before the loop boundary, at sample " << i;
+  }
+  EXPECT_GT(std::fabs(static_cast<double>(out[kBoundary + 2'500])), settled + 0.01)
+      << "the overlap never started after the boundary";
+}
+
 TEST(PgaeRender, DensityFadeArrivesAndRaisesTheMix) {
   pgae::Pgae engine;
-  ASSERT_TRUE(engine.load_scene(dc_assets(0.2F)));
+  const pgae::SceneAssets assets = dc_assets(0.2F);
+  ASSERT_TRUE(engine.load_scene(&assets));
   engine.consume_psv(psv::neutral(psv::Vertical::Aqademiq, 1)); // density 0.5: pulse only
   const auto before = render_seconds(engine, 2.0);
   // Full arousal opens air + lead; their fades start at loop boundaries and take 1.5s.

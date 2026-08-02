@@ -9,10 +9,10 @@
 int main(void) {
   /* Deliberately hard-coded: this is a tripwire for an UNINTENDED ABI version change,
    * so it must be updated by hand in the same commit that moves prism_version(). */
-  if (strcmp(prism_version(), "0.2.0") != 0) {
+  if (strcmp(prism_version(), "0.3.0") != 0) {
     return 1;
   }
-  for (int r = PRISM_OK; r <= PRISM_ERROR_OUT_OF_MEMORY; ++r) {
+  for (int r = PRISM_OK; r <= PRISM_ERROR_BUSY; ++r) {
     if (prism_result_description((prism_result)r) == NULL) {
       return 2;
     }
