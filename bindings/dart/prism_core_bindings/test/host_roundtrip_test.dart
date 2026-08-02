@@ -169,4 +169,45 @@ void main() {
     core.deviceStop();
     core.deviceStop();
   });
+
+  test('a scene crossfade keeps the room playing and frees the caller to change again', () {
+    // The app's mood change. Before this existed the only way to reach another scene was
+    // to dispose the handle and build a new one, which is the audible gap venue staff
+    // reported. Here the engine holds both scenes and fades between them.
+    final core = PrismCore.create(vertical: PrismVertical.venues);
+    addTearDown(core.dispose);
+    core.loadScene(scenes);
+    core.start();
+    core.setMoodOverride(VenueMood.windDown);
+    expect(core.crossfadeActive, isFalse);
+
+    // Pull a little audio so the engine is genuinely running, then swap.
+    core.render(4096);
+    core.crossfadeScene(scenes,
+        crossfade: const Duration(milliseconds: 200), alignToBar: false);
+    expect(core.crossfadeActive, isTrue);
+
+    // Refused while in flight rather than silently dropping the first request — the app
+    // relies on this to fall back instead of losing a tap.
+    expect(
+      () => core.crossfadeScene(scenes, crossfade: const Duration(milliseconds: 200)),
+      throwsA(isA<PrismException>()),
+    );
+
+    // Only the render path consumes the swap, so drive it past the overlap.
+    var silentFrames = 0;
+    for (var i = 0; i < 200; i++) {
+      final block = core.render(1024);
+      if (block.every((s) => s == 0.0)) silentFrames += block.length;
+    }
+    expect(core.crossfadeActive, isFalse, reason: 'the overlap never completed');
+
+    // The point of the whole feature: no digital silence anywhere in the transition.
+    expect(silentFrames, 0, reason: 'the room dropped out during the crossfade');
+
+    // And the handle is immediately reusable for the next mood.
+    core.crossfadeScene(scenes,
+        crossfade: const Duration(milliseconds: 200), alignToBar: false);
+    expect(core.crossfadeActive, isTrue);
+  });
 }

@@ -314,6 +314,46 @@ class PrismCore {
   void clearMoodOverride() =>
       _check(_b.prism_clear_mood_override(_core), 'prism_clear_mood_override');
 
+  /// Moves the room to a different scene without stopping the engine, equal-power.
+  ///
+  /// This is what a mood change should use. [loadScene] binds a scene to a handle for the
+  /// handle's life, so the only other way to change scene is to dispose the handle and
+  /// build a new one — which costs a silence while the new stems decode. This holds both
+  /// scenes and fades between them, so the room never drops out.
+  ///
+  /// BLOCKS for the decode: the stems are read and decoded on the calling thread, because
+  /// the audio thread is not allowed to touch disk. Call it off the UI isolate if the
+  /// pause matters.
+  ///
+  /// [crossfade] is the overlap length — the "how slowly it eases" control. [alignToBar]
+  /// starts the overlap at the outgoing scene's next loop boundary so the material leaving
+  /// is never cut mid-phrase; it is musically better but waits up to one loop period
+  /// (16 s with the venue stems), so a short transition should pass false and accept a
+  /// start at the next audio block.
+  ///
+  /// Throws [PrismException] carrying `PRISM_ERROR_BUSY` while a previous crossfade is
+  /// still running — check [crossfadeActive] first, or catch and retry.
+  void crossfadeScene(
+    String scenesJsonPath, {
+    Duration crossfade = const Duration(milliseconds: 1500),
+    bool alignToBar = true,
+  }) {
+    final path = scenesJsonPath.toNativeUtf8();
+    final swap = calloc<raw.prism_scene_swap>();
+    try {
+      swap.ref.scenes_json_path = path.cast();
+      swap.ref.crossfade_ms = crossfade.inMilliseconds;
+      swap.ref.align_to_loop_boundary = alignToBar ? 1 : 0;
+      _check(_b.prism_crossfade_scene(_core, swap), 'prism_crossfade_scene');
+    } finally {
+      calloc.free(swap);
+      calloc.free(path);
+    }
+  }
+
+  /// True while a crossfade is armed or running. Cheap — one atomic load.
+  bool get crossfadeActive => _b.prism_crossfade_active(_core) != 0;
+
   void deviceStart() => _check(_b.prism_device_start(_core), 'prism_device_start');
 
   /// Stops the built-in device. This is what Takeover calls: the engine goes silent so

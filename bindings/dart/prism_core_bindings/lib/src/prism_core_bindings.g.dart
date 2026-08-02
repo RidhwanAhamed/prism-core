@@ -276,6 +276,51 @@ class PrismCoreBindings {
   late final _prism_clear_mood_override = _prism_clear_mood_overridePtr
       .asFunction<int Function(ffi.Pointer<prism_core>)>();
 
+  /// Control thread only, same class as prism_load_scene: it BLOCKS for the decode, because
+  /// the file I/O has to happen somewhere and the render path is not allowed to do it. It
+  /// returns as soon as the swap is armed; the crossfade itself runs on the audio thread.
+  ///
+  /// The armed command is consumed by whatever renders — prism_render or the built-in
+  /// device — so a handle that is not rendering will hold it and keep reporting BUSY until
+  /// it does. prism_stop drops any unconsumed swap.
+  ///
+  /// PRISM_ERROR_INVALID_STATE     no scene loaded yet
+  /// PRISM_ERROR_BUSY              a crossfade is still in flight
+  /// PRISM_ERROR_INVALID_ARGUMENT  null argument, or the new scene's sample rate differs
+  /// PRISM_ERROR_IO / _OUT_OF_MEMORY  as prism_load_scene
+  prism_result prism_crossfade_scene(
+    ffi.Pointer<prism_core> core,
+    ffi.Pointer<prism_scene_swap> swap,
+  ) {
+    return prism_result.fromValue(_prism_crossfade_scene(
+      core,
+      swap,
+    ));
+  }
+
+  late final _prism_crossfade_scenePtr = _lookup<
+      ffi.NativeFunction<
+          ffi.UnsignedInt Function(ffi.Pointer<prism_core>,
+              ffi.Pointer<prism_scene_swap>)>>('prism_crossfade_scene');
+  late final _prism_crossfade_scene = _prism_crossfade_scenePtr.asFunction<
+      int Function(ffi.Pointer<prism_core>, ffi.Pointer<prism_scene_swap>)>();
+
+  /// Non-zero while a crossfade is armed or running. Safe from any thread; one atomic load.
+  /// Hosts use it to avoid asking for a mood change that would only come back BUSY.
+  int prism_crossfade_active(
+    ffi.Pointer<prism_core> core,
+  ) {
+    return _prism_crossfade_active(
+      core,
+    );
+  }
+
+  late final _prism_crossfade_activePtr =
+      _lookup<ffi.NativeFunction<ffi.Int32 Function(ffi.Pointer<prism_core>)>>(
+          'prism_crossfade_active');
+  late final _prism_crossfade_active = _prism_crossfade_activePtr
+      .asFunction<int Function(ffi.Pointer<prism_core>)>();
+
   /// Sample rate of the loaded scene's stems (0 before a scene is loaded). Mono float32.
   int prism_sample_rate(
     ffi.Pointer<prism_core> core,
@@ -361,7 +406,10 @@ enum prism_result {
 
   /// audio device could not be opened or started
   PRISM_ERROR_DEVICE(4),
-  PRISM_ERROR_OUT_OF_MEMORY(5);
+  PRISM_ERROR_OUT_OF_MEMORY(5),
+
+  /// a scene crossfade is already in flight
+  PRISM_ERROR_BUSY(6);
 
   final int value;
   const prism_result(this.value);
@@ -373,6 +421,7 @@ enum prism_result {
         3 => PRISM_ERROR_IO,
         4 => PRISM_ERROR_DEVICE,
         5 => PRISM_ERROR_OUT_OF_MEMORY,
+        6 => PRISM_ERROR_BUSY,
         _ => throw ArgumentError('Unknown value for prism_result: $value'),
       };
 }
@@ -515,8 +564,38 @@ final class prism_mood_override extends ffi.Struct {
   external double confidence;
 }
 
+/// --- Gapless scene change --------------------------------------------------------------
+/// prism_load_scene binds a scene to a handle for the handle's LIFE, and prism_stop does
+/// not release it. That is deliberate and unchanged: it is what lets the render path own
+/// fully decoded buffers and never touch disk.
+///
+/// This is the other door. A mood is a different scene — a different set of stems — so
+/// moving between moods means holding two at once. The host decodes the incoming scene on
+/// its own thread and hands the engine an equal-power crossfade between the two. The
+/// outgoing scene is released on a CONTROL thread once the audio thread has finished with
+/// it, never on the render path.
+final class prism_scene_swap extends ffi.Struct {
+  /// Manifest path, exactly as prism_load_scene takes it; stems resolve relative to it.
+  /// Its sample rate must equal the loaded scene's — the device is already open at that
+  /// rate and there is no resampler, so a mismatch is INVALID_ARGUMENT.
+  external ffi.Pointer<ffi.Char> scenes_json_path;
+
+  /// Length of the equal-power overlap, in milliseconds. 0 selects the engine default
+  /// (1500 ms). Clamped to [50, 120000]. This is the "how slowly it eases" control.
+  @ffi.Int64()
+  external int crossfade_ms;
+
+  /// Non-zero: start the overlap at the outgoing scene's next loop boundary, so the
+  /// material leaving is never cut mid-phrase. Musically the right default, but it costs
+  /// up to one loop period of waiting before anything is audible — 16 s with the Venues
+  /// stems, which is why the shortest transition setting should pass zero here and accept
+  /// a start at the next block instead.
+  @ffi.Int32()
+  external int align_to_loop_boundary;
+}
+
 const int PRISM_ABI_VERSION_MAJOR = 0;
 
-const int PRISM_ABI_VERSION_MINOR = 2;
+const int PRISM_ABI_VERSION_MINOR = 3;
 
 const int PRISM_ABI_VERSION_PATCH = 0;
